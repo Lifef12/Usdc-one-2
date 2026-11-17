@@ -621,7 +621,7 @@ async function api(path, body, retries = 0) {
                     ? 'Server is starting, please try again in a minute'
                     : 'Server is busy (' + r.status + '), please try again shortly' };
             }
-            if (r.status === 503 && attempt < retries) { await sleep(3000); continue; }
+            if ((r.status === 500 || r.status === 503) && attempt < retries) { await sleep(2500); continue; }
             if (!r.ok && !data.error) data.error = 'Server error (' + r.status + ')';
             return data;
         } catch (e) {
@@ -956,6 +956,15 @@ function secureGate() {
     return null;
 }
 
+// Server problem par: sirf message + Try again button (verification screen nahi)
+function showRetry(msg) {
+    const l = $id('ax-loader');
+    if (!l) { showToast(msg); return; }
+    l.style.display = 'flex';
+    l.innerHTML = '<p style="text-align:center;padding:0 24px;color:#fda4af">' + String(msg).replace(/[<>&]/g, '') +
+        '</p><button class="btn btn-gold" style="width:auto;padding:14px 34px" onclick="location.reload()">Try again</button>';
+}
+
 async function startApp() {
     if (!PREVIEW) { const g = secureGate(); if (g) { showLock(g[0], g[1], g[2]); return; } }
 
@@ -965,19 +974,16 @@ async function startApp() {
     const seen = await withTimeout(axSeen(), 2000, false);
     if (dev.conflict) { showBlocked(); return; }
 
-    const r = await api('/api/me', null, 3);
-    const loader = $id('ax-loader');
-    if (loader) loader.style.display = 'none';
+    const r = await api('/api/me', null, 5);
 
     if (r.code === 'MULTI_ACCOUNT') { showBlocked(); return; }
+    if (r.banned) { showLock('Account banned', 'Your account is banned.', 'BANNED'); return; }
 
     const splash = $id('splash-screen');
-    if (!r.ok) {
-        if (splash) splash.remove();
-        showVerify();
-        showToast(r.error || 'Server error');
-        return;
-    }
+    // Server error par verification screen NAHI dikhani, sirf Try again
+    if (!r.ok) { showRetry(r.error || 'Server error'); return; }
+    const loader = $id('ax-loader');
+    if (loader) loader.style.display = 'none';
 
     if (!seen && !r.data.isVerified) {
         splash.style.display = 'block';
@@ -1281,7 +1287,7 @@ function renderHistory() {
     box.innerHTML = h.map(i => {
         const st = String(i.status).toUpperCase();
         const cls = st === 'PAID' ? 'st-paid' : st === 'DECLINED' ? 'st-declined' : 'st-pending';
-        const label = st === 'PAID' ? '✓ COMPLETED' : st === 'DECLINED' ? '✕ DECLINED' : 'PENDING';
+        const label = st === 'PAID' ? '✓ Completed' : st === 'DECLINED' ? '✕ DECLINED' : 'PENDING';
         return '<div class="wd-row-item wd-r"><span>' + fmtDate(i.date) + '</span><span>' +
             String(i.address).slice(0, 6).replace(/[^0-9a-zA-Z]/g, '') + '...</span><span>-' + fmt(i.amount) +
             '</span><span class="' + cls + '">' + label + '</span></div>';
