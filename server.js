@@ -567,18 +567,30 @@ app.get('/api/ping', (req, res) => res.json({ ok: true, db: dbReady(), version: 
 app.post('/api/me', auth, wrap(async (req, res) => {
     let u = req.user;
     if (u.isVerified) {
-        const r = await checkVerifyChannels(u.id);
-        if (r.ok === false) {
-            await User.updateOne({ id: u.id }, { isVerified: false });
-        } else {
-            // verify ke waqt referral credit reh gaya ho to ab pura kar do (idempotent)
-            if (u.referredBy) await creditReferral(u.id);
-            // is user ke purane verified friends ka missed bonus bhi do
-            await creditPendingForReferrer(u.id);
-        }
-        u = await User.findOne({ id: u.id });
+        try {
+            const r = await checkVerifyChannels(u.id);
+            if (r.ok === false) {
+                await User.updateOne({ id: u.id }, { isVerified: false });
+            } else if (r.ok === true) {
+                // referral steps fail ho jayein to bhi app load honi chahiye (alag try/catch)
+                try {
+                    if (u.referredBy) await creditReferral(u.id);
+                    await creditPendingForReferrer(u.id);
+                } catch (e) { console.log('Referral step error (ignored):', e.message); }
+            }
+            // r.error (Telegram issue) par verified status chhedna nahi
+        } catch (e) { console.log('/api/me channel check error (ignored):', e.message); }
+        u = (await User.findOne({ id: u.id })) || u;
     }
-    res.json({ ok: true, data: await userView(u) });
+    let data;
+    try {
+        data = await userView(u);
+    } catch (e) {
+        // team list fail ho to bhi basic data bhejo
+        console.log('userView error, using basic view:', e.message);
+        data = publicUser(u, null);
+    }
+    res.json({ ok: true, data });
 }));
 
 app.post('/api/verify', auth, wrap(async (req, res) => {
