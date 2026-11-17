@@ -1,13 +1,14 @@
 {
-  "name": "usdc-one-bot",
+  "name": "freetapxbot",
   "version": "1.0.0",
-  "description": "USDC ONE - Telegram Mini App tap-to-earn backend",
+  "description": "FreeTapXBot - BabyDoge TapFi Telegram Mini App tap-to-earn backend",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "license": "ISC",
   "dependencies": {
+    "ethers": "^6.13.4",
     "express": "^4.18.2",
     "mongoose": "^7.5.0"
   },
