@@ -479,23 +479,25 @@ async function userView(u) {
 // Sirf ek baar credit hota hai (atomic flag). Purane users ke liye bhi chalta hai (refCredited field na ho tab bhi).
 async function creditReferral(userId) {
     const u = await User.findOne({ id: String(userId) });
-    if (!u || !u.isVerified || !u.referredBy || u.refCredited === true) return false;
+    if (!u || !u.isVerified || !u.referredBy) return false;
 
-    const claimed = await User.findOneAndUpdate(
-        { id: u.id, refCredited: { $ne: true } },
-        { $set: { refCredited: true } }
+    // Purani kharab entries (bina id) referrer ki list se hata do
+    await User.updateOne({ id: u.referredBy }, { $pull: { referrals: { id: { $exists: false } } } });
+
+    // Atomic + idempotent: bonus sirf tab milta hai jab is user ki entry referrer ki list me pehle se na ho.
+    // (Pehle flag set hota tha aur bonus baad me, isliye beech me fail hone par credit hamesha ke liye reh jata tha.)
+    const ref = await User.findOneAndUpdate(
+        { id: u.referredBy, 'referrals.id': { $ne: u.id } },
+        {
+            $inc: { balance: REF_BONUS },
+            $push: { referrals: { id: u.id, date: new Date().toISOString(), bonus: fromMicro(REF_BONUS), status: 'COMPLETED' } }
+        },
+        { new: true }
     );
-    if (!claimed) return false;
 
-    const ref = await User.findOneAndUpdate({ id: u.referredBy }, {
-        $inc: { balance: REF_BONUS },
-        $push: { referrals: { id: u.id, date: new Date().toISOString(), bonus: fromMicro(REF_BONUS), status: 'COMPLETED' } }
-    }, { new: true });
+    if (u.refCredited !== true) await User.updateOne({ id: u.id }, { $set: { refCredited: true } });
 
-    if (!ref) {
-        console.log('Referral: referrer not found', u.referredBy);
-        return false;
-    }
+    if (!ref) return false;   // pehle se credited ya referrer DB me nahi
 
     console.log(`✅ Referral credited: ${u.id} -> ${ref.id}`);
 
@@ -540,8 +542,8 @@ app.post('/api/me', auth, wrap(async (req, res) => {
         const r = await checkVerifyChannels(u.id);
         if (r.ok === false) {
             await User.updateOne({ id: u.id }, { isVerified: false });
-        } else if (u.referredBy && u.refCredited !== true) {
-            // verify ke waqt referral credit reh gaya ho to ab pura kar do
+        } else if (u.referredBy) {
+            // verify ke waqt referral credit reh gaya ho to ab pura kar do (idempotent, dobara credit nahi hota)
             await creditReferral(u.id);
         }
         u = await User.findOne({ id: u.id });
@@ -1067,6 +1069,7 @@ table{width:100%;border-collapse:collapse}th,td{padding:8px;text-align:left;bord
 <div class="st"><small>Pending Requests</small><div>${pending.length}</div></div></div>
 <div class="card"><h3>⏳ Pending Withdrawal Requests</h3>${pending.length ? `<table><tr><th>User ID</th><th>Amount</th><th>Wallet (BEP-20)</th><th>Action</th></tr>${reqRows}</table>` : '<p style="color:#7e8ba3;font-size:12px">No pending requests.</p>'}</div>
 <div class="card"><h3>🔍 Search & Manage User</h3><form method="GET" class="row"><input name="search" placeholder="Telegram ID or @username" value="${esc(q)}"><button class="b">Search</button></form>${userBox}</div>
+<div class="card"><h3>🛠 Referral Repair</h3><p style="font-size:12px;color:#7e8ba3;margin-bottom:10px">Missed referrals (user verified but referrer got no bonus) ko ek click me theek karo.</p><button class="b g" style="width:100%" data-act="rep">Repair All Referrals</button></div>
 <div class="card"><h3>📢 Broadcast</h3><textarea id="bc" rows="3" placeholder="Message to all users..."></textarea><button class="b" style="margin-top:10px;width:100%" data-act="bc">Send Broadcast</button></div>
 <script>
 async function post(u,b){const r=await fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});const d=await r.json();alert(d.message||'Done');return d}
@@ -1076,6 +1079,7 @@ else if(a==='bal'){const amount=document.getElementById('amt').value;if(!amount)
 else if(a==='ban')d=await post('/admin/ban',{userId:b.dataset.uid,action:b.dataset.do});
 else if(a==='dev'){if(!confirm('Reset device lock for this user?'))return;d=await post('/admin/resetdevice',{userId:b.dataset.uid})}
 else if(a==='wal'){if(!confirm('Unlink wallet for this user?'))return;d=await post('/admin/resetwallet',{userId:b.dataset.uid})}
+else if(a==='rep'){if(!confirm('Repair all missed referrals?'))return;d=await post('/admin/repairrefs',{})}
 else if(a==='cref'){d=await post('/admin/creditref',{userId:b.dataset.uid})}
 else if(a==='msg'){const message=document.getElementById('smsg').value;if(!message)return;d=await post('/admin/msg',{userId:b.dataset.uid,message})}
 else if(a==='bc'){const message=document.getElementById('bc').value;if(!message)return;if(!confirm('Send to all users?'))return;d=await post('/admin/broadcast',{message})}
@@ -1139,9 +1143,16 @@ app.post('/admin/creditref', checkAdmin, wrap(async (req, res) => {
     if (!u) return res.json({ ok: false, message: 'User not found' });
     if (!u.referredBy) return res.json({ ok: false, message: 'This user has no referrer (Referred by = Direct). The /start link did not reach the bot.' });
     if (!u.isVerified) return res.json({ ok: false, message: 'User is not verified yet.' });
-    if (u.refCredited === true) return res.json({ ok: false, message: 'Referral already credited.' });
     const done = await creditReferral(u.id);
-    res.json({ ok: done, message: done ? 'Referral credited and referrer notified.' : 'Could not credit (referrer not found).' });
+    res.json({ ok: done, message: done ? 'Referral credited and referrer notified.' : 'Nothing to credit: already in referrer list, or referrer not found in DB.' });
+}));
+
+// Sab verified referred users ke missed referrals ek saath theek karo (jo pehle se credited hain unhe dobara nahi milega)
+app.post('/admin/repairrefs', checkAdmin, wrap(async (req, res) => {
+    const users = await User.find({ isVerified: true, referredBy: { $ne: null } }, { id: 1 });
+    let n = 0;
+    for (const x of users) { if (await creditReferral(x.id)) n++; }
+    res.json({ ok: true, message: `Repaired ${n} missed referral(s) out of ${users.length} referred users.` });
 }));
 
 app.post('/admin/msg', checkAdmin, wrap(async (req, res) => {
