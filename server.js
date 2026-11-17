@@ -26,23 +26,30 @@ if (!BOT_TOKEN || !MONGO_URI || !ADMIN_USERNAME || !ADMIN_PASSWORD || !ADMIN_ID)
 const WEBHOOK_SECRET = crypto.createHash('sha256').update('wh' + BOT_TOKEN).digest('hex').slice(0, 32);
 
 // ---------- MONEY (BabyDoge) ----------
+// Balance database me INTEGER micro-units me rakha jata hai (1 BabyDoge = 1,000,000) taake float ki galti na ho.
 const COIN = 'BabyDoge';
 const U = 1e6;
 const toMicro = x => Math.round(Number(x) * U);
 const fromMicro = m => Math.round(Number(m) || 0) / U;
-const fmtU = m => String(Number((Number(m) / U).toFixed(6)));
-const fmtD = m => (Number(m) / U).toLocaleString('en-US', { maximumFractionDigits: 2 });
+const fmtU = m => String(Number((Number(m) / U).toFixed(6)));          // plain number (on-chain ke liye)
+const fmtD = m => (Number(m) / U).toLocaleString('en-US', { maximumFractionDigits: 2 });   // display (commas)
 
-const TASK_REWARD = 10e6 * U;
-const REF_BONUS = 20e6 * U;
-const JOIN_BONUS = 5e6 * U;
-const MIN_WITHDRAW = 80e6 * U;        // 80M BabyDoge minimum withdraw
-const MIN_REFERRALS = 4;              // withdraw ke liye kam se kam 4 verified referrals
+const TASK_REWARD = 10e6 * U;         // 10M BabyDoge per task (3 tasks)
+const REF_BONUS = 20e6 * U;          // 20M BabyDoge per referral
+const JOIN_BONUS = 5e6 * U;          // 5M BabyDoge joining bonus (pehli baar verify par)
+const MIN_WITHDRAW = 80e6 * U;      // 80M BabyDoge minimum withdraw
+const MIN_REFS = 4;                  // withdraw ke liye kam az kam itne VERIFIED referrals zaroori
 
 // ---------- AUTO PAYOUT (Baby Doge BEP-20 / BSC) ----------
+// Render env me set karo:
+//   PAYOUT_PRIVATE_KEY = payout wallet ki private key (sirf env me, kabhi code me nahi). Is wallet me BabyDoge + thora BNB (gas) rakho.
+//   BSC_RPC            = (optional) default https://bsc-dataseed.binance.org/
+//   AUTO_PAYOUT        = 'false' likho to auto band (admin approve karega). Default: key ho to ON.
+//   MAX_AUTO_PAYOUT    = (optional) is amount (BabyDoge) se bade withdraw admin approval par jayenge. Default 100,000,000.
+// Key na ho to manual approve system chalta hai.
 const PAYOUT_PRIVATE_KEY = (process.env.PAYOUT_PRIVATE_KEY || '').trim();
 const BSC_RPC = process.env.BSC_RPC || 'https://bsc-dataseed.binance.org/';
-const TOKEN_BSC = '0xc748673057861a797275CD8A068AbB95A902e8de';
+const TOKEN_BSC = '0xc748673057861a797275CD8A068AbB95A902e8de';   // Baby Doge Coin (BEP-20), 9 decimals
 const TOKEN_DECIMALS = 9;
 const AUTO_PAYOUT = process.env.AUTO_PAYOUT !== 'false';
 const MAX_AUTO_PAYOUT = toMicro(process.env.MAX_AUTO_PAYOUT || 100000000);
@@ -65,6 +72,7 @@ if (ethers && PAYOUT_PRIVATE_KEY) {
 }
 const payoutReady = () => !!(payoutWallet && tokenContract);
 
+// BabyDoge on-chain bhejo. Success par { hash }, fail par error throw (paise nahi gaye).
 async function sendToken(address, microAmount) {
     if (!payoutReady()) throw new Error('Payout wallet not configured');
     if (!/^0x[a-fA-F0-9]{40}$/.test(address)) throw new Error('Invalid address');
@@ -81,27 +89,43 @@ async function sendToken(address, microAmount) {
         if (rc && rc.status === 0) throw new Error('REVERTED');
     } catch (e) {
         if (String(e.message) === 'REVERTED') throw new Error('Transaction reverted on-chain');
+        // timeout: tx bhej di gayi hai, confirm hone me der. Paid maan lo.
     }
     return { hash: tx.hash };
 }
 
 // ---------- TAP SYSTEM ----------
+// Ek line = TAP_TARGET taps. Line poori hone par seedha nayi line (koi wait nahi). Din me ROUNDS_PER_DAY lines.
+// 10 lines x 1M = 10M BabyDoge / din.  (Frontend ke constants se match hona zaroori hai)
 const TAP_TARGET = 30;
 const ROUNDS_PER_DAY = 10;
-const ROUND_REWARD = 1e6 * U;
-const COOLDOWN = 0;
-const MAX_TPS = 14;
+const ROUND_REWARD = 1e6 * U;        // 1M BabyDoge per line (10 lines = 10M / din)
+const COOLDOWN = 0;                  // line ke baad koi wait nahi (timer band)
+const MAX_TPS = 14;                  // insani limit: taps / second (server isse zyada credit nahi karta)
 const BOT_USERNAME = 'BabydogeTapfiTg_Bot';
+
+// YouTube: Submit ke kitni der baad Claim allowed hoga. 0 = delay nahi.
 const YT_CLAIM_DELAY = 10 * 1000;
 
 // ---------- CHANNELS ----------
 const CHANNEL_UPDATES = { id: '@updatechanneluta', name: 'Official Updates Channel', url: 'https://t.me/updatechanneluta' };
 const CHANNEL_PAYOUTS = { id: '@cryptotech16', name: 'Official Payouts Channel', url: 'https://t.me/cryptotech16' };
+
+// Verification ke liye channels (app khulne par dono join hone zaroori)
 const VERIFY_CHANNELS = [CHANNEL_UPDATES, CHANNEL_PAYOUTS];
+
+// Telegram task (auto verify)
+// Bot ko @paymentchanneluta me admin banana zaroori hai (membership check ke liye).
 const TASK_CHANNEL = { id: '@paymentchanneluta', name: 'Telegram Task Channel' };
+
+// Payment proof channel: har paid withdraw yahan auto post hota hai.
 const PAYMENT_CHANNEL = '@cryptotech16';
+
+// YouTube tasks (Open -> Submit -> Claim)
 const YT_TASKS = ['yt1', 'yt2'];
 
+// Welcome message ke saath dikhne wali image/GIF (DIRECT link hona zaroori hai: i.ibb.co/...)
+// Env me WELCOME_IMG set karke badal sakte ho. Khali ('') likho to sirf text jayega.
 const WELCOME_IMG = process.env.WELCOME_IMG !== undefined
     ? process.env.WELCOME_IMG
     : 'https://i.ibb.co/KpB6QLQF/baby-doge-mining-animation.gif';
@@ -111,7 +135,7 @@ const WELCOME_TEXT = 'Hello, welcome to <b>BabyDoge TapFi</b>! 🐶 Get ready fo
     'Build your team and boost your daily earnings!\n\n' +
     '🔥 <b>Let\'s earn with BabyDoge TapFi!</b>';
 
-// ---------- DATABASE ----------
+// ---------- DATABASE (server band nahi hota, DB connect na ho to retry karta hai) ----------
 async function connectDB() {
     try {
         await mongoose.connect(MONGO_URI, { serverSelectionTimeoutMS: 15000 });
@@ -128,7 +152,7 @@ const dbReady = () => mongoose.connection.readyState === 1;
 const UserSchema = new mongoose.Schema({
     id: { type: String, required: true, unique: true },
     username: { type: String, default: 'User' },
-    balance: { type: Number, default: 0 },
+    balance: { type: Number, default: 0 },            // micro-units (integer)
     isVerified: { type: Boolean, default: false },
     isBanned: { type: Boolean, default: false },
     tasks: {
@@ -136,25 +160,31 @@ const UserSchema = new mongoose.Schema({
         yt1: { type: Boolean, default: false },
         yt2: { type: Boolean, default: false }
     },
+    // tap system (UTC din ke hisaab se reset)
     tapDay: { type: String, default: '' },
     tapDone: { type: Number, default: 0 },
     tapLine: { type: Number, default: 0 },
     tapNext: { type: Number, default: 0 },
     lastTapAt: { type: Number, default: 0 },
+    // withdraw wallet: pehle withdraw par lock, ek wallet = ek account
     wallet: { type: String, default: null },
     referredBy: { type: String, default: null },
     refCredited: { type: Boolean, default: false },
     joinBonus: { type: Boolean, default: false },
     refMilestone: { type: Boolean, default: false },
     referrals: { type: Array, default: [] },
-    totalWithdrawn: { type: Number, default: 0 },
+    totalWithdrawn: { type: Number, default: 0 },     // micro-units
     withdrawals: { type: Array, default: [] },
     createdAt: { type: Number, default: Date.now }
 });
+// Ek wallet sirf ek account par (null wale ignore hote hain)
 UserSchema.index({ wallet: 1 }, { unique: true, partialFilterExpression: { wallet: { $type: 'string' } } });
+// Team list / purane referrals dhoondne ke liye
 UserSchema.index({ referredBy: 1 });
 const User = mongoose.model('User', UserSchema);
 
+// ONE-TIME FIX: purane users jinki referrals / withdrawals field array nahi hai ("Cannot apply $pull to a non-array value" error)
+// Ye har start par chalta hai, safe hai (sirf kharab documents ko [] banata hai).
 mongoose.connection.on('open', async () => {
     try {
         const a = await User.collection.updateMany({ referrals: { $not: { $type: 'array' } } }, { $set: { referrals: [] } });
@@ -163,22 +193,24 @@ mongoose.connection.on('open', async () => {
     } catch (e) { console.log('Array fix error:', e.message); }
 });
 
+// userId unique: ek user ki ek waqt mein sirf ek pending withdrawal
 const PendingRequest = mongoose.model('PendingRequest', new mongoose.Schema({
     reqId: { type: String, required: true, unique: true },
     userId: { type: String, required: true, unique: true },
-    amount: { type: Number, required: true },
+    amount: { type: Number, required: true },         // micro-units
     address: { type: String, required: true }
 }));
 
+// YouTube pending claim: userId unique => ek user ka ek waqt mein sirf ek pending claim.
 const PendingClaim = mongoose.model('PendingClaim', new mongoose.Schema({
     userId: { type: String, required: true, unique: true },
     task: { type: String, required: true },
     createdAt: { type: Number, default: Date.now }
 }));
 
-// ---------- MULTIPLE ACCOUNT DETECTION ----------
-const DEVICE_LOCK = true;
-const FP_LOCK = true;
+// ---------- MULTIPLE ACCOUNT DETECTION (1 device = 1 account) ----------
+const DEVICE_LOCK = true;   // false = detection band
+const FP_LOCK = true;       // phone fingerprint se bhi block. Galat block par admin "Reset Device" use kare.
 
 const Device = mongoose.model('Device', new mongoose.Schema({
     deviceId: { type: String, required: true, unique: true },
@@ -196,6 +228,7 @@ function normIp(ip) {
     return ip;
 }
 
+// returns null (ok) | 'conflict' | 'missing'   ("pehla account jeetta hai")
 async function deviceConflict(userId, deviceId, fp, fp2, ip) {
     if (!deviceId || deviceId.length < 8 || deviceId.length > 100) return 'missing';
 
@@ -231,9 +264,8 @@ const wrap = fn => (req, res, next) => fn(req, res, next).catch(e => {
 });
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const utcDay = (ms = Date.now()) => new Date(ms).toISOString().slice(0, 10);
-const isAddr = a => /^0x[a-fA-F0-9]{40}$/.test(a || '');
 
-// ---------- RATE LIMIT / REPLAY / LOCKS ----------
+// ---------- RATE LIMIT / REPLAY PROTECTION / LOCKS ----------
 const rlMap = new Map();
 function rl(key, max, win) {
     const now = Date.now();
@@ -243,8 +275,9 @@ function rl(key, max, win) {
     return e.n <= max;
 }
 
-const nonces = new Map();
-const guardAt = new Map();
+const nonces = new Map();      // nonce -> expiry
+const guardAt = new Map();     // userId -> last channel-check time (tap ke liye cache)
+const meCheckAt = new Map();   // userId -> last background channel-check time (/api/me ke liye)
 const NONCE_TTL = 20 * 60 * 1000;
 
 setInterval(() => {
@@ -252,8 +285,10 @@ setInterval(() => {
     for (const [k, e] of rlMap) if (now - e.t > 120000) rlMap.delete(k);
     for (const [k, t] of nonces) if (t < now) nonces.delete(k);
     for (const [k, t] of guardAt) if (now - t > 3600000) guardAt.delete(k);
+    for (const [k, t] of meCheckAt) if (now - t > 3600000) meCheckAt.delete(k);
 }, 60000).unref();
 
+// Ek user ke tap requests ek ke baad ek chalte hain (double-credit / race se bachao)
 const locks = new Map();
 async function withLock(key, fn) {
     const prev = locks.get(key) || Promise.resolve();
@@ -284,13 +319,14 @@ async function tg(method, body) {
 const sendMsg = (chat_id, text, reply_markup, html = true) =>
     tg('sendMessage', { chat_id, text, reply_markup, ...(html ? { parse_mode: 'HTML' } : {}) });
 
+// Welcome: pehle image/GIF + caption (text + buttons). Image fail ho to sirf text bhej do.
 async function sendWelcome(chatId, reply_markup) {
     if (WELCOME_IMG) {
         const isGif = /\.(gif|mp4)(\?.*)?$/i.test(WELCOME_IMG);
         const r = await tg(isGif ? 'sendAnimation' : 'sendPhoto', {
             chat_id: chatId,
             [isGif ? 'animation' : 'photo']: WELCOME_IMG,
-            caption: WELCOME_TEXT,
+            caption: WELCOME_TEXT,        // caption limit 1024 chars (abhi ~400)
             parse_mode: 'HTML',
             reply_markup
         });
@@ -300,6 +336,7 @@ async function sendWelcome(chatId, reply_markup) {
     return sendMsg(chatId, WELCOME_TEXT, reply_markup);
 }
 
+// true = member, false = not member, null = Telegram error
 async function isMember(channel, userId) {
     const r = await tg('getChatMember', { chat_id: channel, user_id: Number(userId) });
     if (!r.ok) {
@@ -310,16 +347,15 @@ async function isMember(channel, userId) {
     return ['member', 'administrator', 'creator'].includes(s) || (s === 'restricted' && r.result.is_member === true);
 }
 
+// SPEED: dono channels ek saath (parallel) check hote hain
 async function checkVerifyChannels(userId) {
-    const missing = [];
-    for (const ch of VERIFY_CHANNELS) {
-        const m = await isMember(ch.id, userId);
-        if (m === null) return { error: 'Channel check failed' };
-        if (!m) missing.push(ch.name);
-    }
+    const results = await Promise.all(VERIFY_CHANNELS.map(ch => isMember(ch.id, userId)));
+    if (results.some(m => m === null)) return { error: 'Channel check failed' };
+    const missing = VERIFY_CHANNELS.filter((ch, i) => !results[i]).map(ch => ch.name);
     return { ok: missing.length === 0, missing };
 }
 
+// user verified ho + abhi bhi required channels mein ho. Fail par error string, pass par null.
 async function telegramGuard(user) {
     if (!user.isVerified) return 'Please verify channels first.';
     const c = await checkVerifyChannels(user.id);
@@ -332,6 +368,7 @@ async function telegramGuard(user) {
     return null;
 }
 
+// Tap ke liye: har batch par Telegram call nahi, 5 minute me ek baar channel check
 async function guardCached(user) {
     if (Date.now() - (guardAt.get(user.id) || 0) < 5 * 60 * 1000) return null;
     const g = await telegramGuard(user);
@@ -358,14 +395,17 @@ function displayName(u) { return u.username ? `@${u.username}` : (u.first_name |
 
 async function auth(req, res, next) {
     try {
+        // Database abhi connect nahi hua to saaf message do (crash ya 404 nahi)
         if (!dbReady()) return res.status(503).json({ ok: false, error: 'Server is starting, please try again in a minute' });
 
+        // IP level rate limit
         if (!rl('ip:' + req.ip, 600, 60000)) return res.status(429).json({ ok: false, error: 'Too many requests. Please slow down.' });
 
         const u = validateInitData(req.headers['x-init-data']);
         if (!u || !u.id) return res.status(401).json({ ok: false, error: 'Please open via bot.' });
         const id = String(u.id);
 
+        // Replay protection: fresh timestamp + ek nonce sirf ek baar
         const ts = Number(req.headers['x-ts']);
         const nonce = String(req.headers['x-nonce'] || '');
         if (!Number.isFinite(ts) || Math.abs(Date.now() - ts) > 15 * 60 * 1000) {
@@ -376,8 +416,10 @@ async function auth(req, res, next) {
         }
         nonces.set(id + ':' + nonce, Date.now() + NONCE_TTL);
 
+        // User level rate limit
         if (!rl('u:' + id, 150, 60000)) return res.status(429).json({ ok: false, error: 'Too many requests. Please slow down.' });
 
+        // FIX: upsert race (E11000) par dobara try, 500 error nahi
         let user;
         try {
             user = await User.findOneAndUpdate(
@@ -417,11 +459,13 @@ async function auth(req, res, next) {
     }
 }
 
+// Aaj ka tap state (naya UTC din = reset)
 function tapState(u) {
     const same = u.tapDay === utcDay();
     return { done: same ? u.tapDone : 0, line: same ? u.tapLine : 0, next: same ? u.tapNext : 0 };
 }
 
+// Referral list saaf karke bhejo (purani/kharab entries ko theek ya hata do)
 function cleanReferrals(list) {
     return (Array.isArray(list) ? list : []).map(r => {
         r = r || {};
@@ -437,24 +481,16 @@ function cleanReferrals(list) {
     }).filter(Boolean);
 }
 
-// Total verified referrals (team + already-paid list, duplicates removed)
-async function refCountOf(userId) {
-    const team = await User.find({ referredBy: String(userId), isVerified: true }, { id: 1 }).lean();
-    const me = await User.findOne({ id: String(userId) }, { referrals: 1 }).lean();
-    const ids = new Set(team.map(t => t.id));
-    cleanReferrals(me && me.referrals).forEach(r => ids.add(r.id));
-    return ids.size;
-}
-
-function publicUser(u, pendingClaim) {
+// proof: { task, status: 'ready' } => frontend Submit ki jagah Claim button dikhaye
+function publicUser(u, pending) {
     const t = tapState(u);
-    const refs = cleanReferrals(u.referrals);
     return {
         id: u.id,
         username: u.username,
         balance: fromMicro(u.balance),
         serverTime: Date.now(),
         isVerified: u.isVerified,
+        rules: { minWithdraw: fromMicro(MIN_WITHDRAW), minRefs: MIN_REFS },
         tasks: {
             tg2: !!(u.tasks && u.tasks.tg2),
             yt1: !!(u.tasks && u.tasks.yt1),
@@ -469,14 +505,13 @@ function publicUser(u, pendingClaim) {
             cooldown: COOLDOWN,
             nextTime: t.next
         },
-        proof: pendingClaim ? { task: pendingClaim.task, status: 'ready' } : null,
-        referrals: refs,
-        refCount: refs.length,
-        totalWithdrawn: fromMicro(u.totalWithdrawn),
+        proof: pending ? { task: pending.task, status: 'ready' } : null,
+        referrals: cleanReferrals(u.referrals),
         withdrawals: (Array.isArray(u.withdrawals) ? u.withdrawals : []).slice(0, 50)
     };
 }
 
+// User ka view. Team DB se banti hai: sirf VERIFIED friends (purane bhi) dikhte hain.
 async function userView(u) {
     const p = await PendingClaim.findOne({ userId: u.id });
     const view = publicUser(u, p);
@@ -492,16 +527,37 @@ async function userView(u) {
     });
     paid.forEach((r, id) => { if (!seen.has(id)) list.push(r); });
     view.referrals = list;
-    view.refCount = list.length;
     return view;
 }
 
-// ---------- REFERRAL CREDIT ----------
+// ---------- USER STATS (admin ko withdraw request me dikhane ke liye) ----------
+// refs = VERIFIED referrals ki ginti, totalWithdrawn = ab tak paid total, paidCount = kitni baar paid hua
+async function userStats(userId) {
+    const id = String(userId);
+    const [refs, u] = await Promise.all([
+        User.countDocuments({ referredBy: id, isVerified: true }),
+        User.findOne({ id }, { totalWithdrawn: 1, withdrawals: 1 }).lean()
+    ]);
+    const w = Array.isArray(u && u.withdrawals) ? u.withdrawals : [];
+    return {
+        refs,
+        totalWithdrawn: (u && Number(u.totalWithdrawn)) || 0,
+        paidCount: w.filter(x => x && String(x.status).toUpperCase() === 'PAID').length
+    };
+}
+const statsLine = s =>
+    `👥 Verified Referrals: <b>${s.refs}</b>\n` +
+    `📤 Total Withdrawn: <b>${fmtD(s.totalWithdrawn)} ${COIN}</b> (${s.paidCount} paid)`;
+
+// ---------- REFERRAL CREDIT (FIXED) ----------
+// Naya user verify hote hi referrer ko bonus + notification milta hai.
+// Sirf ek baar credit hota hai (refCredited flag se atomic claim). Fail par flag wapas false.
 async function creditReferral(userId) {
     const u = await User.findOne({ id: String(userId) });
     if (!u || !u.isVerified || !u.referredBy || u.referredBy === u.id) return false;
     const refId = u.referredBy;
 
+    // Referrer ki referrals field array na ho to [] bana do (purana data)
     await User.collection.updateOne(
         { id: refId, referrals: { $not: { $type: 'array' } } },
         { $set: { referrals: [] } }
@@ -516,6 +572,7 @@ async function creditReferral(userId) {
         return false;
     }
 
+    // atomic claim: sirf ek request credit kar sakti hai
     const claim = await User.findOneAndUpdate(
         { id: u.id, refCredited: { $ne: true } },
         { $set: { refCredited: true } }
@@ -540,11 +597,13 @@ async function creditReferral(userId) {
 
         return true;
     } catch (e) {
+        // rollback: agli baar dobara try ho sake
         await User.updateOne({ id: u.id }, { $set: { refCredited: false } });
         throw e;
     }
 }
 
+// Referrer ke purane verified friends jinka bonus reh gaya ho, unhe ek baar credit karo (idempotent)
 async function creditPendingForReferrer(refId) {
     const kids = await User.find({ referredBy: String(refId), isVerified: true }, { id: 1 }).limit(500).lean();
     if (!kids.length) return;
@@ -553,7 +612,7 @@ async function creditPendingForReferrer(refId) {
     for (const k of kids) if (!have.has(k.id)) await creditReferral(k.id);
 }
 
-// ---------- MIDDLEWARE ----------
+// CORS: mini app kisi bhi host se khule, API calls kaam karein
 app.use('/api', (req, res, next) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-init-data, x-device-id, x-device-fp, x-device-fp2, x-ts, x-nonce');
@@ -567,29 +626,39 @@ app.use(express.urlencoded({ extended: false, limit: '10kb' }));
 app.use((req, res, next) => { res.setHeader('X-Content-Type-Options', 'nosniff'); next(); });
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('/health', (req, res) => res.send(dbReady() ? 'OK' : 'OK (database connecting)'));
-app.get('/api/ping', (req, res) => res.json({ ok: true, db: dbReady(), version: 'babydoge-tapfi-v5' }));
+app.get('/api/ping', (req, res) => res.json({ ok: true, db: dbReady(), version: 'babydoge-tapfi-v5-fast' }));
 
 // ---------- USER API ----------
+
+// SPEED: channel check + referral steps ab BACKGROUND me chalte hain (response ka intezar nahi).
+// App 2 second me khulti hai. Check har user ke liye 5 minute me ek baar hota hai.
+async function backgroundVerifyCheck(userId, hasReferrer) {
+    try {
+        const r = await checkVerifyChannels(userId);
+        if (r.ok === false) {
+            await User.updateOne({ id: userId }, { isVerified: false });
+            guardAt.delete(userId);
+        } else if (r.ok === true) {
+            try {
+                if (hasReferrer) await creditReferral(userId);
+                await creditPendingForReferrer(userId);
+            } catch (e) { console.log('Referral step error (ignored):', e.message); }
+        }
+        // r.error (Telegram issue) par verified status chhedna nahi
+    } catch (e) { console.log('Background channel check error (ignored):', e.message); }
+}
+
 app.post('/api/me', auth, wrap(async (req, res) => {
-    let u = req.user;
-    if (u.isVerified) {
-        try {
-            const r = await checkVerifyChannels(u.id);
-            if (r.ok === false) {
-                await User.updateOne({ id: u.id }, { isVerified: false });
-            } else if (r.ok === true) {
-                try {
-                    if (u.referredBy) await creditReferral(u.id);
-                    await creditPendingForReferrer(u.id);
-                } catch (e) { console.log('Referral step error (ignored):', e.message); }
-            }
-        } catch (e) { console.log('/api/me channel check error (ignored):', e.message); }
-        u = (await User.findOne({ id: u.id })) || u;
+    const u = req.user;
+    if (u.isVerified && Date.now() - (meCheckAt.get(u.id) || 0) > 5 * 60 * 1000) {
+        meCheckAt.set(u.id, Date.now());
+        backgroundVerifyCheck(u.id, !!u.referredBy);   // await nahi: fire and forget
     }
     let data;
     try {
         data = await userView(u);
     } catch (e) {
+        // team list fail ho to bhi basic data bhejo
         console.log('userView error, using basic view:', e.message);
         data = publicUser(u, null);
     }
@@ -603,13 +672,16 @@ app.post('/api/verify', auth, wrap(async (req, res) => {
     if (!r.ok) return res.json({ ok: false, missing: r.missing, error: 'Must join all channels and tap Check again.' });
 
     await User.updateOne({ id: u.id }, { isVerified: true });
+    meCheckAt.set(u.id, Date.now());
 
+    // Joining bonus: sirf ek baar
     const jb = await User.findOneAndUpdate(
         { id: u.id, joinBonus: { $ne: true } },
         { $set: { joinBonus: true }, $inc: { balance: JOIN_BONUS } }
     );
     const gotJoin = !!jb;
 
+    // FIX: referral fail ho to bhi verify success hona chahiye
     try { await creditReferral(u.id); }
     catch (e) { console.log('creditReferral error (ignored):', e.message); }
 
@@ -620,7 +692,7 @@ app.post('/api/verify', auth, wrap(async (req, res) => {
     res.json({ ok: true, joinBonus: gotJoin, data });
 }));
 
-// ---------- TAP ----------
+// ---------- TAP (har tap par BabyDoge) ----------
 app.post('/api/tap', auth, wrap(async (req, res) => {
     const id = req.user.id;
     const taps = Math.floor(Number(req.body.taps));
@@ -640,12 +712,14 @@ app.post('/api/tap', auth, wrap(async (req, res) => {
         if (t.done >= ROUNDS_PER_DAY) return { error: 'Daily limit reached. Come back tomorrow!', u };
         if (now < t.next) return { error: 'Wait for the next line.', u };
 
+        // insani raftaar: pichle batch ke baad itne seconds me itne hi taps possible
         const elapsed = Math.min(now - (u.lastTapAt || 0), 10000);
         const allowed = Math.floor(elapsed / 1000 * MAX_TPS) + 5;
         const n = Math.min(taps, allowed, TAP_TARGET - t.line);
         if (n <= 0) return { u };
 
         const newLine = t.line + n;
+        // cumulative integer formula: 30 taps ka total hamesha exact ROUND_REWARD
         const credit = Math.floor(newLine * ROUND_REWARD / TAP_TARGET) - Math.floor(t.line * ROUND_REWARD / TAP_TARGET);
         const completed = newLine >= TAP_TARGET;
 
@@ -672,6 +746,7 @@ app.post('/api/tap', auth, wrap(async (req, res) => {
     res.json({ ok: true, data: await userView(r.u) });
 }));
 
+// Telegram Channel 2 task: membership server check karta hai
 app.post('/api/task', auth, wrap(async (req, res) => {
     const u = req.user;
     const taskId = String(req.body.taskId || '');
@@ -691,7 +766,8 @@ app.post('/api/task', auth, wrap(async (req, res) => {
     res.json({ ok: true, data: await userView(done) });
 }));
 
-// ---------- YOUTUBE TASKS ----------
+// ---------- YOUTUBE TASKS (Open -> Submit -> Claim) ----------
+
 async function ytSubmit(req, res) {
     const u = req.user;
     const taskId = String(req.body.taskId || '');
@@ -750,12 +826,21 @@ app.post('/api/yt/claim', auth, wrap(ytClaim));
 app.post('/api/proof/start', auth, wrap(ytSubmit));
 app.post('/api/proof/claim', auth, wrap(ytClaim));
 
-// ---------- WITHDRAW ----------
+// ---------- WITHDRAW (BabyDoge BEP-20: manual wallet address) ----------
 const adminButtons = reqId => ({ inline_keyboard: [[{ text: '✅ Approve', callback_data: `approve_${reqId}` }, { text: '❌ Reject', callback_data: `reject_${reqId}` }]] });
 
-// Admin ko request ke saath user ke total refers + total withdrawn dikhta hai
-const userStatsText = (refs, totalWithdrawnMicro) =>
-    `👥 Total Refers: <b>${refs}</b>\n📤 Total Withdrawn: <b>${fmtD(totalWithdrawnMicro)} ${COIN}</b>`;
+// Admin ko naya withdraw request: user ke total referrals + total withdrawn ke saath
+async function notifyAdminRequest(reqId, user, amt, address) {
+    let st = '';
+    try { st = '\n' + statsLine(await userStats(user.id)); } catch (e) { console.log('userStats error:', e.message); }
+    await sendMsg(ADMIN_ID,
+        `📤 <b>New Withdraw Request</b>\n\n` +
+        `👤 User ID: <code>${esc(user.id)}</code>\n` +
+        `💰 Amount: <b>${fmtD(amt)} ${COIN}</b> (BEP-20)\n` +
+        `🏦 Address: <code>${esc(address)}</code>` + st,
+        adminButtons(reqId)
+    );
+}
 
 app.post('/api/withdraw', auth, wrap(async (req, res) => {
     const u = req.user;
@@ -765,12 +850,13 @@ app.post('/api/withdraw', auth, wrap(async (req, res) => {
     const address = String(req.body.address || '').trim();
 
     if (!u.isVerified) return res.json({ ok: false, error: 'Please verify channels first.' });
-    if (!isAddr(address)) return res.json({ ok: false, error: 'Invalid BEP-20 wallet address!' });
+    if (!/^0x[a-fA-F0-9]{40}$/.test(address)) return res.json({ ok: false, error: 'Invalid BEP-20 wallet address!' });
     if (!Number.isFinite(amt) || amt < MIN_WITHDRAW) return res.json({ ok: false, error: `Minimum withdrawal is ${fmtD(MIN_WITHDRAW)} ${COIN}!` });
 
-    const refs = await refCountOf(u.id);
-    if (refs < MIN_REFERRALS) {
-        return res.json({ ok: false, error: `You need at least ${MIN_REFERRALS} referrals to withdraw. You have ${refs}.` });
+    // Kam az kam MIN_REFS VERIFIED referrals zaroori (0 referral par withdraw nahi)
+    const refCount = await User.countDocuments({ referredBy: u.id, isVerified: true });
+    if (refCount < MIN_REFS) {
+        return res.json({ ok: false, error: `You need at least ${MIN_REFS} verified referrals to withdraw. You have ${refCount}.` });
     }
 
     const guard = await telegramGuard(u);
@@ -819,34 +905,37 @@ app.post('/api/withdraw', auth, wrap(async (req, res) => {
     }
 
     const view = await userView(upd);
-    const stats = userStatsText(refs, upd.totalWithdrawn);
 
+    // AUTO PAYOUT
     if (AUTO_PAYOUT && payoutReady() && amt <= MAX_AUTO_PAYOUT) {
         res.json({ ok: true, data: view });
-        autoPayout(reqId, u.id, amt, address, stats).catch(e => console.log('autoPayout error:', e));
+        autoPayout(reqId, u.id, amt, address).catch(e => console.log('autoPayout error:', e));
         return;
     }
 
-    sendMsg(ADMIN_ID,
-        `📤 <b>New Withdraw Request</b>\n\n👤 User: ${esc(u.username)}\n🆔 User ID: <code>${esc(u.id)}</code>\n💰 Amount: <b>${fmtD(amt)} ${COIN}</b> (BEP-20)\n🏦 Address: <code>${esc(address)}</code>\n${stats}`,
-        adminButtons(reqId)
-    );
+    // MANUAL: admin approve karega
     res.json({ ok: true, data: view });
+    notifyAdminRequest(reqId, u, amt, address).catch(e => console.log('notifyAdminRequest error:', e.message));
 }));
 
-async function autoPayout(reqId, userId, amt, address, stats) {
+async function autoPayout(reqId, userId, amt, address) {
     const r = await resolveWithdraw(reqId, true);
+    let st = '';
+    try { st = '\n' + statsLine(await userStats(userId)); } catch (e) { console.log('userStats error:', e.message); }
     if (r.ok) {
-        sendMsg(ADMIN_ID, `🤖 <b>Auto payout sent</b>\n\n👤 User ID: <code>${esc(userId)}</code>\n💰 ${fmtD(amt)} ${COIN} (BEP-20)\n🏦 <code>${esc(address)}</code>\n${stats}` +
-            (r.txHash ? `\n🔗 https://bscscan.com/tx/${esc(r.txHash)}` : ''));
+        sendMsg(ADMIN_ID, `🤖 <b>Auto payout sent</b>\n\n👤 User ID: <code>${esc(userId)}</code>\n💰 ${fmtD(amt)} ${COIN} (BEP-20)\n🏦 <code>${esc(address)}</code>` +
+            (r.txHash ? `\n🔗 https://bscscan.com/tx/${esc(r.txHash)}` : '') + st);
     } else {
         sendMsg(ADMIN_ID,
-            `⚠️ <b>Auto payout failed</b>\n\n👤 User ID: <code>${esc(userId)}</code>\n💰 ${fmtD(amt)} ${COIN} (BEP-20)\n🏦 <code>${esc(address)}</code>\n${stats}\n\nReason: ${esc(r.message || 'unknown')}` +
+            `⚠️ <b>Auto payout failed</b>\n\n👤 User ID: <code>${esc(userId)}</code>\n💰 ${fmtD(amt)} ${COIN} (BEP-20)\n🏦 <code>${esc(address)}</code>` + st +
+            `\n\nReason: ${esc(r.message || 'unknown')}` +
             (r.restored ? '\n\nRequest is pending. Fix the issue and approve manually, or reject to refund.' : ''),
             r.restored ? adminButtons(reqId) : undefined
         );
     }
 }
+
+// ---------- WITHDRAW RESOLVE ----------
 
 async function markPaid(pr, txHash) {
     const set = { 'withdrawals.$[w].status': 'PAID' };
@@ -859,6 +948,7 @@ async function markPaid(pr, txHash) {
     sendMsg(pr.userId, `✅ Your withdrawal of <b>${fmtD(pr.amount)} ${COIN}</b> has been paid!` +
         (txHash ? `\n🔗 <a href="https://bscscan.com/tx/${esc(txHash)}">View transaction</a>` : ''));
 
+    // Auto payment proof: channel me username + ID + amount + address post hota hai
     const uname = paidUser && paidUser.username ? paidUser.username : 'User';
     sendMsg(PAYMENT_CHANNEL,
         `✅ <b>New Payment Sent!</b>\n\n` +
@@ -871,6 +961,7 @@ async function markPaid(pr, txHash) {
     ).then(r => { if (!r.ok) console.log('Payment channel post failed:', r.description || ''); });
 }
 
+// Payout fail hone par request wapas pending me (agar user ne beech me nayi request na bana li ho), warna refund
 async function restorePending(pr) {
     try {
         await PendingRequest.create({ reqId: pr.reqId, userId: pr.userId, amount: pr.amount, address: pr.address });
@@ -894,6 +985,7 @@ async function resolveWithdraw(reqId, approve) {
     if (approve) {
         if (payoutReady()) {
             try {
+                // ek waqt me ek hi on-chain payment (nonce clash se bachao)
                 const out = await withLock('payout', () => sendToken(pr.address, pr.amount));
                 txHash = out.hash;
             } catch (e) {
@@ -915,6 +1007,7 @@ async function resolveWithdraw(reqId, approve) {
 }
 
 // ---------- TELEGRAM WEBHOOK ----------
+
 app.post('/api/webhook', async (req, res) => {
     if (req.headers['x-telegram-bot-api-secret-token'] !== WEBHOOK_SECRET) return res.sendStatus(403);
     res.sendStatus(200);
@@ -933,6 +1026,7 @@ app.post('/api/webhook', async (req, res) => {
 
             if (text.startsWith('/start')) {
                 console.log('📩 /start received from', chatId, 'text:', JSON.stringify(text));
+                // /start 123456  |  /start ref123456  |  /start ref_123456  |  /start@Bot 123456
                 const m = text.match(/^\/start(?:@\w+)?\s+(?:ref_?)?(\d{1,20})\s*$/i);
                 let referrer = m ? m[1] : null;
                 if (referrer === chatId) referrer = null;
@@ -953,15 +1047,18 @@ app.post('/api/webhook', async (req, res) => {
                     if (e && e.code === 11000) user = await User.findOneAndUpdate({ id: chatId }, { $set: { username: name } }, { new: true });
                     else throw e;
                 }
+                // Referrer sirf link hota hai (bonus nahi). Bonus verification success par milta hai.
                 if (referrer && user && !user.referredBy && !user.isVerified) {
                     await User.updateOne({ id: chatId, referredBy: null }, { $set: { referredBy: referrer } });
                     console.log(`Referral linked: ${chatId} <- ${referrer}`);
                 }
 
+                // Har channel ka button alag row me (poori width)
                 const kb = [
                     [{ text: '📢 Official Updates Channel', url: CHANNEL_UPDATES.url }],
                     [{ text: '💸 Official Payouts Channel', url: CHANNEL_PAYOUTS.url }]
                 ];
+                // Image/GIF + welcome text + buttons
                 await sendWelcome(chatId, { inline_keyboard: kb });
             } else if (text === '/admin' && chatId === ADMIN_ID) {
                 await sendMsg(chatId, '👑 <b>BabyDoge TapFi Admin</b>',
@@ -996,6 +1093,7 @@ app.post('/api/webhook', async (req, res) => {
 });
 
 // ---------- ADMIN PANEL ----------
+
 const sessions = new Map();
 const attempts = new Map();
 const parseCookies = h => Object.fromEntries(
@@ -1060,22 +1158,22 @@ app.get('/admin/dashboard', checkAdmin, wrap(async (req, res) => {
     const q = String(req.query.search || '').trim().slice(0, 64);
     const found = q ? await User.findOne({ $or: [{ id: q }, { username: q.startsWith('@') ? q : '@' + q }] }) : null;
 
-    const reqRows = (await Promise.all(pending.map(async r => {
-        const usr = await User.findOne({ id: r.userId }, { totalWithdrawn: 1 }).lean();
-        const refs = await refCountOf(r.userId);
-        return `<tr><td>${esc(r.userId)}</td><td><b>${fmtD(r.amount)} ${COIN}</b></td><td><code>${esc(r.address)}</code></td>
-<td>👥 ${refs}<br>📤 ${fmtD(usr ? usr.totalWithdrawn : 0)}</td>
-<td><button class="b g" data-act="req" data-do="approve" data-id="${esc(r.reqId)}">Approve</button> <button class="b r" data-act="req" data-do="reject" data-id="${esc(r.reqId)}">Reject</button></td></tr>`;
-    }))).join('');
+    // Har pending request ke user ke referrals + total withdrawn
+    const pStats = await Promise.all(pending.map(r =>
+        userStats(r.userId).catch(() => ({ refs: 0, totalWithdrawn: 0, paidCount: 0 }))
+    ));
+
+    const reqRows = pending.map((r, i) => `<tr><td>${esc(r.userId)}</td><td><b>${fmtD(r.amount)} ${COIN}</b></td><td>${pStats[i].refs}</td><td>${fmtD(pStats[i].totalWithdrawn)} (${pStats[i].paidCount})</td><td><code>${esc(r.address)}</code></td>
+<td><button class="b g" data-act="req" data-do="approve" data-id="${esc(r.reqId)}">Approve</button> <button class="b r" data-act="req" data-do="reject" data-id="${esc(r.reqId)}">Reject</button></td></tr>`).join('');
 
     let userBox = '';
     if (found) {
         const ts = tapState(found);
-        const refs = await refCountOf(found.id);
+        const fs = await userStats(found.id).catch(() => ({ refs: 0 }));
         userBox = `<div class="box">
 <p>👤 <b>${esc(found.username)}</b> | ID: <code>${esc(found.id)}</code></p>
 <p>💰 Balance: <b>${fmtD(found.balance)} ${COIN}</b> | 📤 Total Withdrawn: <b>${fmtD(found.totalWithdrawn)} ${COIN}</b></p>
-<p>✅ Verified: ${found.isVerified ? 'Yes' : 'No'} | 🚫 Banned: ${found.isBanned ? 'Yes' : 'No'} | 👥 Total Refers: <b>${refs}</b> (min ${MIN_REFERRALS} to withdraw) | Referred by: ${esc(found.referredBy || 'Direct')} | Ref credited: ${found.refCredited ? 'Yes' : 'No'}</p>
+<p>✅ Verified: ${found.isVerified ? 'Yes' : 'No'} | 🚫 Banned: ${found.isBanned ? 'Yes' : 'No'} | 👥 Referrals (verified): ${fs.refs} | Referred by: ${esc(found.referredBy || 'Direct')} | Ref credited: ${found.refCredited ? 'Yes' : 'No'}</p>
 <p>👆 Today's lines: ${ts.done} / ${ROUNDS_PER_DAY} | 🏦 Wallet: <code>${esc(found.wallet || 'not linked')}</code></p>
 <div class="row"><input type="number" step="any" id="amt" placeholder="Amount (${COIN})">
 <button class="b g" data-act="bal" data-do="add" data-uid="${esc(found.id)}">+ Add</button>
@@ -1111,7 +1209,7 @@ table{width:100%;border-collapse:collapse}th,td{padding:8px;text-align:left;bord
 <div class="st"><small>Users' Balance</small><div>${fmtD(s.bal)} ${COIN}</div></div>
 <div class="st"><small>Paid Out</small><div>${fmtD(s.paid)} ${COIN}</div></div>
 <div class="st"><small>Pending Requests</small><div>${pending.length}</div></div></div>
-<div class="card"><h3>⏳ Pending Withdrawal Requests</h3>${pending.length ? `<table><tr><th>User ID</th><th>Amount</th><th>Wallet (BEP-20)</th><th>Refers / Total Withdrawn</th><th>Action</th></tr>${reqRows}</table>` : '<p style="color:#7e8ba3;font-size:12px">No pending requests.</p>'}</div>
+<div class="card"><h3>⏳ Pending Withdrawal Requests</h3>${pending.length ? `<table><tr><th>User ID</th><th>Amount</th><th>Verified Refs</th><th>Total Withdrawn (paid #)</th><th>Wallet (BEP-20)</th><th>Action</th></tr>${reqRows}</table>` : '<p style="color:#7e8ba3;font-size:12px">No pending requests.</p>'}</div>
 <div class="card"><h3>🔍 Search & Manage User</h3><form method="GET" class="row"><input name="search" placeholder="Telegram ID or @username" value="${esc(q)}"><button class="b">Search</button></form>${userBox}</div>
 <div class="card"><h3>🛠 Referral Repair</h3><p style="font-size:12px;color:#7e8ba3;margin-bottom:10px">Missed referrals (user verified but referrer got no bonus) ko ek click me theek karo.</p><button class="b g" style="width:100%" data-act="rep">Repair All Referrals</button></div>
 <div class="card"><h3>📢 Broadcast</h3><textarea id="bc" rows="3" placeholder="Message to all users..."></textarea><button class="b" style="margin-top:10px;width:100%" data-act="bc">Send Broadcast</button></div>
@@ -1181,6 +1279,7 @@ app.post('/admin/resetwallet', checkAdmin, wrap(async (req, res) => {
     res.json({ ok: true, message: 'Wallet unlinked. User can link a new wallet on next withdraw.' });
 }));
 
+// Manual: verified user ka pending referral bonus referrer ko abhi de do
 app.post('/admin/creditref', checkAdmin, wrap(async (req, res) => {
     const u = await User.findOne({ id: String(req.body.userId) });
     if (!u) return res.json({ ok: false, message: 'User not found' });
@@ -1190,6 +1289,7 @@ app.post('/admin/creditref', checkAdmin, wrap(async (req, res) => {
     res.json({ ok: done, message: done ? 'Referral credited and referrer notified.' : 'Nothing to credit: already in referrer list, or referrer not found in DB.' });
 }));
 
+// Sab verified referred users ke missed referrals ek saath theek karo (jo pehle se credited hain unhe dobara nahi milega)
 app.post('/admin/repairrefs', checkAdmin, wrap(async (req, res) => {
     const users = await User.find({ isVerified: true, referredBy: { $ne: null } }, { id: 1 });
     let n = 0, failed = 0;
@@ -1218,9 +1318,11 @@ app.post('/admin/broadcast', checkAdmin, wrap(async (req, res) => {
     }
 }));
 
+// Unknown /api path: HTML ki jagah JSON 404
 app.use('/api', (req, res) => res.status(404).json({ ok: false, error: 'Not found' }));
 
 // ---------- START ----------
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
     console.log(`Server running on port ${PORT}`);
@@ -1232,6 +1334,12 @@ app.listen(PORT, async () => {
             allowed_updates: ['message', 'callback_query']
         });
         console.log(r.ok ? '✅ Telegram webhook set' : '❌ Webhook failed', r.description || '');
+
+        // KEEP-ALIVE: Render free server 15 min idle par so jata hai (cold start = 30-50s loading).
+        // Har 10 minute me apne aap ko ping karte hain taake server jaagta rahe.
+        setInterval(() => {
+            fetch(PUBLIC_URL + '/health', { signal: AbortSignal.timeout(10000) }).catch(() => {});
+        }, 10 * 60 * 1000).unref();
     } else {
         console.log('⚠️ PUBLIC_URL (https) not set - webhook not configured.');
     }
