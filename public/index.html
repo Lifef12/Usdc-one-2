@@ -489,7 +489,7 @@ body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;ba
 const tg = window.Telegram && window.Telegram.WebApp;
 if (tg) { try { tg.ready(); tg.expand(); } catch (e) {} }
 
-const API_BASE = window.location.origin;   // same server (Render URL) automatically
+const API_BASE = 'https://usdc-one-2.onrender.com';   // Render server
 const BOT_USERNAME = 'FreeTapXBot';
 const COOLDOWN = 24 * 3600 * 1000;
 const DAILY_REWARD = 0.5;      // USDC per day
