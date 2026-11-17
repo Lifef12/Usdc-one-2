@@ -684,7 +684,8 @@ async function checkVerification() {
     btn.innerText = 'Checking...';
     btn.disabled = true;
 
-    const r = await api('/api/verify');
+    // FIX: retry 2 baar, taake Render cold start par "Server error" na aaye
+    const r = await api('/api/verify', null, 2);
 
     verifying = false;
     btn.innerText = 'I’ve joined — Check again';
