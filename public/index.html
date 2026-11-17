@@ -165,10 +165,15 @@ body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;ba
 #verify-btn{padding:18px;font-size:14px;margin-top:16px}
 
 .bento{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:18px 0 12px}
-.tile{background:var(--s1);border:1px solid var(--bd);border-radius:18px;padding:14px 6px}
-.tile i{color:var(--or);font-size:15px}
-.tile span{display:block;font-size:9px;letter-spacing:1.5px;color:var(--mu);font-weight:700;margin:8px 0 4px}
-.tile b{font-size:16px;font-weight:800}
+.tile{--c:49,208,255;position:relative;overflow:hidden;text-align:center;padding:14px 6px 13px;border-radius:20px;background:linear-gradient(160deg,rgba(var(--c),.18),rgba(var(--c),.04) 65%),var(--s1);border:1px solid rgba(var(--c),.38);box-shadow:0 8px 22px rgba(var(--c),.14),inset 0 1px 0 rgba(255,255,255,.07)}
+.tile::after{content:"";position:absolute;left:18%;right:18%;top:0;height:2px;border-radius:0 0 4px 4px;background:rgb(var(--c));box-shadow:0 0 12px rgb(var(--c))}
+.tile.t-daily{--c:49,208,255}
+.tile.t-refer{--c:167,139,250}
+.tile.t-wd{--c:255,176,32}
+.tile-ic{width:38px;height:38px;margin:0 auto;border-radius:12px;display:grid;place-items:center;background:rgba(var(--c),.18);border:1px solid rgba(var(--c),.4);color:rgb(var(--c));font-size:16px}
+.tile span{display:block;font-size:9px;letter-spacing:1.6px;color:rgba(var(--c),.95);font-weight:800;margin:10px 0 3px}
+.tile b{display:block;font-size:20px;font-weight:800;line-height:1.1;color:#fff;text-shadow:0 0 14px rgba(var(--c),.55)}
+.tile small{display:block;margin-top:3px;font-size:9px;font-weight:600;color:var(--mu);letter-spacing:.3px}
 .quick{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .quick .btn{padding:14px 6px;font-size:12px}
 
@@ -196,14 +201,14 @@ body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;ba
 .trx-copy-btn{position:absolute;right:6px;background:var(--blue);color:#fff;border:none;padding:9px 14px;border-radius:10px;cursor:pointer}
 .ref-line{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--mu);margin-top:14px}
 .ref-line b{font-size:14px;color:#fff}
-.ref-head,.ref-row{display:grid;grid-template-columns:1.5fr 1fr 1fr 1fr;gap:6px;align-items:center;font-size:11px;padding:10px 8px;text-align:left}
-.wd-head,.wd-r{display:grid;grid-template-columns:1fr 1fr 1.2fr 1fr;gap:6px;align-items:center;font-size:11px;padding:10px 8px;text-align:left}
+.ref-head,.ref-row{display:grid;grid-template-columns:1.3fr 1fr 1fr 1.4fr;gap:6px;align-items:center;font-size:11px;padding:10px 8px;text-align:left}
+.wd-head,.wd-r{display:grid;grid-template-columns:.9fr .9fr 1.2fr 1.4fr;gap:6px;align-items:center;font-size:11px;padding:10px 8px;text-align:left}
 .ref-head,.wd-head{background:rgba(255,255,255,.05);color:var(--mu);border-radius:10px;font-weight:700}
 .ref-row,.wd-r{border-bottom:1px solid rgba(255,255,255,.05);font-weight:600}
 #ref-list,#withdraw-history-list{background:rgba(0,0,0,.2);border:1px solid var(--bd);border-radius:14px;margin-top:6px;overflow:hidden}
-.ref-ok,.st-paid{background:rgba(25,245,165,.14);color:var(--or);border-radius:99px;padding:4px 6px;text-align:center;font-weight:800;font-size:10px}
-.st-pending{background:rgba(255,176,32,.14);color:#ffb020;border-radius:99px;padding:4px 6px;text-align:center;font-weight:800;font-size:10px}
-.st-declined{background:rgba(255,92,122,.14);color:var(--bad);border-radius:99px;padding:4px 6px;text-align:center;font-weight:800;font-size:10px}
+.ref-ok,.st-paid{background:rgba(25,245,165,.14);color:var(--or);border-radius:99px;padding:4px 6px;text-align:center;font-weight:800;font-size:9px;white-space:nowrap}
+.st-pending{background:rgba(255,176,32,.14);color:#ffb020;border-radius:99px;padding:4px 6px;text-align:center;font-weight:800;font-size:9px;white-space:nowrap}
+.st-declined{background:rgba(255,92,122,.14);color:var(--bad);border-radius:99px;padding:4px 6px;text-align:center;font-weight:800;font-size:9px;white-space:nowrap}
 .ref-empty{text-align:center;color:var(--mu);font-size:12px;padding:22px 0}
 
 .wd-hero{text-align:center;padding:24px 16px}
@@ -411,9 +416,9 @@ body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;ba
     <div class="daily"><span>Today's earnings</span><b><span id="day-earned">0</span> / 10,000,000 BabyDoge</b></div>
 
     <div class="bento">
-      <div class="tile"><i class="fa-solid fa-calendar-day"></i><span>DAILY</span><b>10M</b></div>
-      <div class="tile"><i class="fa-solid fa-user-plus"></i><span>REFER</span><b>20M</b></div>
-      <div class="tile"><i class="fa-solid fa-arrow-up-from-bracket"></i><span>MIN WD</span><b>50M</b></div>
+      <div class="tile t-daily"><div class="tile-ic"><i class="fa-solid fa-calendar-day"></i></div><span>DAILY</span><b>10M</b><small>BabyDoge</small></div>
+      <div class="tile t-refer"><div class="tile-ic"><i class="fa-solid fa-user-plus"></i></div><span>REFER</span><b>20M</b><small>per friend</small></div>
+      <div class="tile t-wd"><div class="tile-ic"><i class="fa-solid fa-arrow-up-from-bracket"></i></div><span>MIN WD</span><b>50M</b><small>BabyDoge</small></div>
     </div>
     <div class="quick">
       <button class="btn btn-green" onclick="switchTab('tasks')"><i class="fa-solid fa-gift"></i> Free BabyDoge</button>
@@ -443,7 +448,7 @@ body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;ba
   <section id="tab-earn" class="tab-content">
     <div class="title-header">Referrals</div>
     <div class="lvl"><i class="fa-solid fa-users"></i><div><span>PER FRIEND</span><b>20M BabyDoge</b></div></div>
-    <p class="sub" style="margin:-4px 0 16px;">Invite <b>4 friends</b> and earn <b>140M BabyDoge</b> in total. New users get a <b>5M</b> joining bonus!</p>
+    <p class="sub" style="margin:-4px 0 16px;">Invite friends and earn <b>20M BabyDoge</b> per user who has successfully joined your referral link.</p>
     <div class="card">
       <span class="card-label">YOUR REFERRAL LINK</span>
       <div class="trx-input-wrapper"><input type="text" id="ref-link" readonly><button class="trx-copy-btn" onclick="copyRefLink()"><i class="fa-solid fa-copy"></i></button></div>
@@ -1006,9 +1011,17 @@ function shareRefLink() {
         '&text=' + encodeURIComponent('Get free BabyDoge every day! 💵'));
 }
 
+// Safe date: galat ya khali date par '-' dikhao ("Invalid Date" kabhi nahi)
+function fmtDate(d) {
+    if (!d) return '-';
+    const x = new Date(d);
+    return isNaN(x.getTime()) ? '-' : x.toLocaleDateString();
+}
+
 function renderReferrals() {
-    const list = (S && S.referrals) || [];
-    const total = list.reduce((t, r) => t + Number(r.bonus || 0), 0);
+    // Sirf wo entries jinki valid user ID ho
+    const list = ((S && S.referrals) || []).filter(r => r && r.id);
+    const total = list.reduce((t, r) => t + (Number(r.bonus) || 0), 0);
     document.getElementById('ref-total').innerText = list.length + (list.length === 1 ? ' Friend' : ' Friends');
     document.getElementById('ref-bonus').innerText = fmt(total) + ' BabyDoge';
 
@@ -1019,8 +1032,8 @@ function renderReferrals() {
     }
     box.innerHTML = list.map(r =>
         '<div class="ref-row"><span>' + String(r.id).replace(/[^0-9]/g, '') + '</span><span>' +
-        new Date(r.date).toLocaleDateString() + '</span><span style="color:#8cf0a8;">+' + fmt(r.bonus) +
-        '</span><span class="ref-ok">✓ Active</span></div>'
+        fmtDate(r.date) + '</span><span style="color:#8cf0a8;">+' + fmt(r.bonus) +
+        '</span><span class="ref-ok">✓ Completed</span></div>'
     ).join('');
 }
 
@@ -1268,8 +1281,8 @@ function renderHistory() {
     box.innerHTML = h.map(i => {
         const st = String(i.status).toUpperCase();
         const cls = st === 'PAID' ? 'st-paid' : st === 'DECLINED' ? 'st-declined' : 'st-pending';
-        const label = st === 'PAID' ? '✓ PAID' : st === 'DECLINED' ? '✕ DECLINED' : 'PENDING';
-        return '<div class="wd-row-item wd-r"><span>' + new Date(i.date).toLocaleDateString() + '</span><span>' +
+        const label = st === 'PAID' ? '✓ COMPLETED' : st === 'DECLINED' ? '✕ DECLINED' : 'PENDING';
+        return '<div class="wd-row-item wd-r"><span>' + fmtDate(i.date) + '</span><span>' +
             String(i.address).slice(0, 6).replace(/[^0-9a-zA-Z]/g, '') + '...</span><span>-' + fmt(i.amount) +
             '</span><span class="' + cls + '">' + label + '</span></div>';
     }).join('');
