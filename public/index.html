@@ -224,14 +224,9 @@ body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;ba
 .manual-box input{width:100%;padding:14px;font-size:12px;font-weight:600;background:var(--ink);border:1px solid var(--bd);border-radius:14px;color:#fff;outline:0;user-select:text}
 .wd-notice{margin:0 0 16px;padding:12px;border-radius:14px;background:rgba(255,176,32,.1);border:1px solid rgba(255,176,32,.5);font-size:11px;line-height:1.6;color:#ffd48a;text-align:left}
 .wd-notice b{color:#ffb020}
-.wd-refbox{margin:0 0 16px;padding:12px 14px;border-radius:14px;background:rgba(25,245,165,.08);border:1px solid rgba(25,245,165,.35);text-align:left}
-.wd-refbox .wr-top{display:flex;justify-content:space-between;align-items:center;font-size:12px;font-weight:700;color:#fff}
-.wd-refbox .wr-top b{color:var(--or)}
-.wd-refbox .wr-bar{height:8px;border-radius:99px;background:rgba(255,255,255,.08);overflow:hidden;margin-top:9px}
-.wd-refbox .wr-bar i{display:block;height:100%;width:0;border-radius:99px;background:var(--g1);transition:width .3s}
-.wd-refbox .wr-sub{font-size:10.5px;color:var(--mu);margin-top:8px;line-height:1.5}
-.wd-refbox.bad{background:rgba(255,92,122,.08);border-color:rgba(255,92,122,.4)}
-.wd-refbox.bad .wr-top b{color:var(--bad)}
+
+/* Referral requirement box: hamesha hidden (har user ke liye). Check sirf background me chalta hai. */
+#wd-refbox,.wd-refbox{display:none !important}
 
 /* ===== WITHDRAW CONFIRM MODAL ===== */
 #wd-modal{position:fixed;inset:0;z-index:1000000001;display:none;align-items:center;justify-content:center;padding:20px;background:rgba(2,5,10,.78);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
@@ -478,13 +473,6 @@ body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;ba
       <div class="wd-title">Withdraw BabyDoge</div>
       <div class="wd-net" id="wd-net-txt">Network: BNB Smart Chain (BEP20) · Minimum 80M BabyDoge</div>
 
-      <!-- Referral box: sirf tab dikhta hai jab verified referrals 4 se kam hon (JS control karta hai) -->
-      <div class="wd-refbox bad" id="wd-refbox" style="display:none">
-        <div class="wr-top"><span>Verified referrals required</span><b id="wr-count">0 / 4</b></div>
-        <div class="wr-bar"><i id="wr-fill"></i></div>
-        <div class="wr-sub" id="wr-sub">Invite at least 4 verified friends to unlock withdrawals.</div>
-      </div>
-
       <div class="wd-notice">Enter your Baby Doge BEP20 wallet address (Trust Wallet or any supported exchange wallet).</div>
 
       <div class="wd-input"><i class="fa-solid fa-coins"></i><input type="number" id="withdraw-amount" placeholder="Amount (min 80,000,000)" min="80000000" step="1" inputmode="decimal"><button type="button" class="max-btn" onclick="setMaxWithdraw()">MAX</button></div>
@@ -672,27 +660,14 @@ function renderAll() {
     checkMiningTimer();
 }
 
-// Min withdraw + verified referral requirement (server rules ke mutabiq)
-// Referral box SIRF tab dikhta hai jab referrals kam hon. 4+ referrals par poora hidden (rule background me chalta hai).
+// Min withdraw text update. Referral box ab kisi bhi user ko kabhi nahi dikhta.
+// 4 verified referrals ka check sirf requestWithdraw() aur server me chalta hai (background logic).
 function renderWdRules() {
-    const mw = minWd(), mr = minRefs(), rc = refCount();
+    const mw = minWd();
     const tile = document.getElementById('tile-minwd'); if (tile) tile.innerText = short(mw);
     const net = document.getElementById('wd-net-txt'); if (net) net.innerText = 'Network: BNB Smart Chain (BEP20) · Minimum ' + short(mw) + ' BabyDoge';
     const inp = document.getElementById('withdraw-amount');
     if (inp) { inp.placeholder = 'Amount (min ' + fmt(mw) + ')'; inp.min = String(mw); }
-    const box = document.getElementById('wd-refbox');
-    if (box) {
-        const okRefs = rc >= mr;
-        if (okRefs) {
-            box.style.display = 'none';
-        } else {
-            box.style.display = 'block';
-            box.classList.add('bad');
-            document.getElementById('wr-count').innerText = rc + ' / ' + mr;
-            document.getElementById('wr-fill').style.width = (100 * Math.min(1, rc / mr)).toFixed(0) + '%';
-            document.getElementById('wr-sub').innerText = 'Invite at least ' + mr + ' verified friends to unlock withdrawals. You need ' + (mr - rc) + ' more.';
-        }
-    }
 }
 
 function showToast(m) {
@@ -1399,7 +1374,7 @@ function wdConfirm(addr, amt) {
 async function requestWithdraw() {
     if (!S || !S.isVerified) { showVerify(); return; }
 
-    // 4 verified referrals ke bina withdraw nahi (0 referral par bilkul nahi)
+    // BACKGROUND CHECK: 4 verified referrals ke bina withdraw nahi (box UI me nahi dikhta, sirf yahan aur server par check hota hai)
     const mr = minRefs(), rc = refCount();
     if (rc < mr) { showToast('You need at least ' + mr + ' verified referrals to withdraw. You have ' + rc + '.'); return; }
 
