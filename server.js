@@ -176,6 +176,8 @@ const UserSchema = new mongoose.Schema({
 });
 // Ek wallet sirf ek account par (null wale ignore hote hain)
 UserSchema.index({ wallet: 1 }, { unique: true, partialFilterExpression: { wallet: { $type: 'string' } } });
+// Team list / purane referrals dhoondne ke liye
+UserSchema.index({ referredBy: 1 });
 const User = mongoose.model('User', UserSchema);
 
 // userId unique: ek user ki ek waqt mein sirf ek pending withdrawal
@@ -469,14 +471,28 @@ function publicUser(u, pending) {
     };
 }
 
+// User ka view. Team DB se banti hai: sirf VERIFIED friends (purane bhi) dikhte hain.
 async function userView(u) {
     const p = await PendingClaim.findOne({ userId: u.id });
-    return publicUser(u, p);
+    const view = publicUser(u, p);
+    const paid = new Map(cleanReferrals(u.referrals).map(r => [r.id, r]));
+    const team = await User.find({ referredBy: u.id, isVerified: true }, { id: 1, createdAt: 1 })
+        .sort({ createdAt: -1 }).limit(500).lean();
+    const seen = new Set();
+    const list = [];
+    team.forEach(t => {
+        seen.add(t.id);
+        const r = paid.get(t.id);
+        list.push({ id: t.id, date: r ? r.date : t.createdAt, bonus: r ? r.bonus : 0, status: 'COMPLETED' });
+    });
+    paid.forEach((r, id) => { if (!seen.has(id)) list.push(r); });
+    view.referrals = list;
+    return view;
 }
 
 // ---------- REFERRAL CREDIT ----------
 // Naya user verify hote hi (channels join) referrer ko bonus + notification milta hai.
-// Sirf ek baar credit hota hai (atomic flag). Purane users ke liye bhi chalta hai (refCredited field na ho tab bhi).
+// /start par kuch nahi milta, sirf verification success par. Sirf ek baar credit hota hai (atomic).
 async function creditReferral(userId) {
     const u = await User.findOne({ id: String(userId) });
     if (!u || !u.isVerified || !u.referredBy) return false;
@@ -485,7 +501,6 @@ async function creditReferral(userId) {
     await User.updateOne({ id: u.referredBy }, { $pull: { referrals: { id: { $exists: false } } } });
 
     // Atomic + idempotent: bonus sirf tab milta hai jab is user ki entry referrer ki list me pehle se na ho.
-    // (Pehle flag set hota tha aur bonus baad me, isliye beech me fail hone par credit hamesha ke liye reh jata tha.)
     const ref = await User.findOneAndUpdate(
         { id: u.referredBy, 'referrals.id': { $ne: u.id } },
         {
@@ -495,9 +510,13 @@ async function creditReferral(userId) {
         { new: true }
     );
 
-    if (u.refCredited !== true) await User.updateOne({ id: u.id }, { $set: { refCredited: true } });
-
-    if (!ref) return false;   // pehle se credited ya referrer DB me nahi
+    if (!ref) {
+        // Referrer nahi mila ya pehle se credited. Flag sirf tab set karo jab sach me credited ho.
+        const already = await User.exists({ id: u.referredBy, 'referrals.id': u.id });
+        if (already && u.refCredited !== true) await User.updateOne({ id: u.id }, { $set: { refCredited: true } });
+        return false;
+    }
+    await User.updateOne({ id: u.id }, { $set: { refCredited: true } });
 
     console.log(`✅ Referral credited: ${u.id} -> ${ref.id}`);
 
@@ -518,6 +537,15 @@ async function creditReferral(userId) {
     return true;
 }
 
+// Referrer ke purane verified friends jinka bonus reh gaya ho, unhe ek baar credit karo (idempotent)
+async function creditPendingForReferrer(refId) {
+    const kids = await User.find({ referredBy: String(refId), isVerified: true }, { id: 1 }).limit(500).lean();
+    if (!kids.length) return;
+    const me = await User.findOne({ id: String(refId) }, { referrals: 1 }).lean();
+    const have = new Set(cleanReferrals(me && me.referrals).map(r => r.id));
+    for (const k of kids) if (!have.has(k.id)) await creditReferral(k.id);
+}
+
 // CORS: mini app kisi bhi host se khule, API calls kaam karein
 app.use('/api', (req, res, next) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -532,7 +560,7 @@ app.use(express.urlencoded({ extended: false, limit: '10kb' }));
 app.use((req, res, next) => { res.setHeader('X-Content-Type-Options', 'nosniff'); next(); });
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('/health', (req, res) => res.send(dbReady() ? 'OK' : 'OK (database connecting)'));
-app.get('/api/ping', (req, res) => res.json({ ok: true, db: dbReady(), version: 'babydoge-tapfi-v2-referral' }));
+app.get('/api/ping', (req, res) => res.json({ ok: true, db: dbReady(), version: 'babydoge-tapfi-v3-referral' }));
 
 // ---------- USER API ----------
 
@@ -542,9 +570,11 @@ app.post('/api/me', auth, wrap(async (req, res) => {
         const r = await checkVerifyChannels(u.id);
         if (r.ok === false) {
             await User.updateOne({ id: u.id }, { isVerified: false });
-        } else if (u.referredBy) {
-            // verify ke waqt referral credit reh gaya ho to ab pura kar do (idempotent, dobara credit nahi hota)
-            await creditReferral(u.id);
+        } else {
+            // verify ke waqt referral credit reh gaya ho to ab pura kar do (idempotent)
+            if (u.referredBy) await creditReferral(u.id);
+            // is user ke purane verified friends ka missed bonus bhi do
+            await creditPendingForReferrer(u.id);
         }
         u = await User.findOne({ id: u.id });
     }
@@ -566,7 +596,7 @@ app.post('/api/verify', auth, wrap(async (req, res) => {
     );
     const gotJoin = !!jb;
 
-    // Referrer ko bonus + notification
+    // Referrer ko bonus + notification (verification success par)
     await creditReferral(u.id);
 
     const fresh = await User.findOne({ id: u.id });
@@ -912,7 +942,7 @@ app.post('/api/webhook', async (req, res) => {
                     { $set: { username: name } },
                     { upsert: true, new: true, setDefaultsOnInsert: true }
                 );
-                // Referrer sirf tab set hota hai jab user abhi verify nahi hua aur pehle se koi referrer nahi
+                // Referrer sirf link hota hai (bonus nahi). Bonus verification success par milta hai.
                 if (referrer && !user.referredBy && !user.isVerified) {
                     await User.updateOne({ id: chatId, referredBy: null }, { $set: { referredBy: referrer } });
                     console.log(`Referral linked: ${chatId} <- ${referrer}`);
