@@ -424,6 +424,22 @@ function tapState(u) {
     return { done: same ? u.tapDone : 0, line: same ? u.tapLine : 0, next: same ? u.tapNext : 0 };
 }
 
+// Referral list saaf karke bhejo (purani/kharab entries ko theek ya hata do)
+function cleanReferrals(list) {
+    return (Array.isArray(list) ? list : []).map(r => {
+        r = r || {};
+        const id = r.id || r.userId || r.uid || r.user;
+        if (!id) return null;
+        const bonus = Number(r.bonus || r.amount);
+        return {
+            id: String(id),
+            date: r.date || r.createdAt || r.time || null,
+            bonus: Number.isFinite(bonus) && bonus > 0 ? bonus : fromMicro(REF_BONUS),
+            status: 'COMPLETED'
+        };
+    }).filter(Boolean);
+}
+
 // proof: { task, status: 'ready' } => frontend Submit ki jagah Claim button dikhaye
 function publicUser(u, pending) {
     const t = tapState(u);
@@ -448,7 +464,7 @@ function publicUser(u, pending) {
             nextTime: t.next
         },
         proof: pending ? { task: pending.task, status: 'ready' } : null,
-        referrals: u.referrals,
+        referrals: cleanReferrals(u.referrals),
         withdrawals: u.withdrawals.slice(0, 50)
     };
 }
@@ -456,6 +472,48 @@ function publicUser(u, pending) {
 async function userView(u) {
     const p = await PendingClaim.findOne({ userId: u.id });
     return publicUser(u, p);
+}
+
+// ---------- REFERRAL CREDIT ----------
+// Naya user verify hote hi (channels join) referrer ko bonus + notification milta hai.
+// Sirf ek baar credit hota hai (atomic flag). Purane users ke liye bhi chalta hai (refCredited field na ho tab bhi).
+async function creditReferral(userId) {
+    const u = await User.findOne({ id: String(userId) });
+    if (!u || !u.isVerified || !u.referredBy || u.refCredited === true) return false;
+
+    const claimed = await User.findOneAndUpdate(
+        { id: u.id, refCredited: { $ne: true } },
+        { $set: { refCredited: true } }
+    );
+    if (!claimed) return false;
+
+    const ref = await User.findOneAndUpdate({ id: u.referredBy }, {
+        $inc: { balance: REF_BONUS },
+        $push: { referrals: { id: u.id, date: new Date().toISOString(), bonus: fromMicro(REF_BONUS), status: 'COMPLETED' } }
+    }, { new: true });
+
+    if (!ref) {
+        console.log('Referral: referrer not found', u.referredBy);
+        return false;
+    }
+
+    console.log(`✅ Referral credited: ${u.id} -> ${ref.id}`);
+
+    sendMsg(ref.id,
+        `🎉 <b>New Referral Joined!</b>\n\n` +
+        `👥 A new user has successfully joined through your referral link.\n\n` +
+        `💰 <b>${fmtD(REF_BONUS)} ${COIN.toUpperCase()}</b> has been added to your balance!\n\n` +
+        `🚀 Keep inviting friends and earn more Baby Doge!`
+    ).then(r => { if (!r.ok) console.log('Referral notify failed:', r.description || ''); });
+
+    if (cleanReferrals(ref.referrals).length >= REF_MILESTONE_COUNT) {
+        const ms = await User.findOneAndUpdate(
+            { id: ref.id, refMilestone: { $ne: true } },
+            { $set: { refMilestone: true }, $inc: { balance: REF_MILESTONE_BONUS } }
+        );
+        if (ms) sendMsg(ref.id, `🏆 <b>${REF_MILESTONE_COUNT} referrals completed!</b>\n+${fmtD(REF_MILESTONE_BONUS)} ${COIN} bonus added (total ${fmtD(REF_MILESTONE_COUNT * REF_BONUS + REF_MILESTONE_BONUS)} ${COIN}).`);
+    }
+    return true;
 }
 
 // CORS: mini app kisi bhi host se khule, API calls kaam karein
@@ -482,8 +540,11 @@ app.post('/api/me', auth, wrap(async (req, res) => {
         const r = await checkVerifyChannels(u.id);
         if (r.ok === false) {
             await User.updateOne({ id: u.id }, { isVerified: false });
-            u = await User.findOne({ id: u.id });
+        } else if (u.referredBy && u.refCredited !== true) {
+            // verify ke waqt referral credit reh gaya ho to ab pura kar do
+            await creditReferral(u.id);
         }
+        u = await User.findOne({ id: u.id });
     }
     res.json({ ok: true, data: await userView(u) });
 }));
@@ -503,28 +564,9 @@ app.post('/api/verify', auth, wrap(async (req, res) => {
     );
     const gotJoin = !!jb;
 
-    if (u.referredBy && !u.refCredited) {
-        const claimed = await User.findOneAndUpdate(
-            { id: u.id, refCredited: false },
-            { refCredited: true }
-        );
-        if (claimed) {
-            const ref = await User.findOneAndUpdate({ id: u.referredBy }, {
-                $inc: { balance: REF_BONUS },
-                $push: { referrals: { id: u.id, date: new Date().toISOString(), bonus: fromMicro(REF_BONUS) } }
-            }, { new: true });
-            if (ref) {
-                sendMsg(ref.id, `🎁 <b>New referral joined!</b>\nUser ID: <code>${esc(u.id)}</code>\n+${fmtD(REF_BONUS)} ${COIN} added to your balance.`);
-                if (ref.referrals.length >= REF_MILESTONE_COUNT) {
-                    const ms = await User.findOneAndUpdate(
-                        { id: ref.id, refMilestone: { $ne: true } },
-                        { $set: { refMilestone: true }, $inc: { balance: REF_MILESTONE_BONUS } }
-                    );
-                    if (ms) sendMsg(ref.id, `🏆 <b>${REF_MILESTONE_COUNT} referrals completed!</b>\n+${fmtD(REF_MILESTONE_BONUS)} ${COIN} bonus added (total ${fmtD(REF_MILESTONE_COUNT * REF_BONUS + REF_MILESTONE_BONUS)} ${COIN}).`);
-                }
-            }
-        }
-    }
+    // Referrer ko bonus + notification
+    await creditReferral(u.id);
+
     const fresh = await User.findOne({ id: u.id });
     res.json({ ok: true, joinBonus: gotJoin, data: await userView(fresh) });
 }));
@@ -852,10 +894,14 @@ app.post('/api/webhook', async (req, res) => {
             if (known && known.isBanned) return sendMsg(chatId, '⚠️ <b>Access Denied:</b> Your account has been banned.');
 
             if (text.startsWith('/start')) {
-                const m = text.match(/^\/start\s+(\d{1,20})$/);
+                // /start 123456  |  /start ref123456  |  /start ref_123456  |  /start@Bot 123456
+                const m = text.match(/^\/start(?:@\w+)?\s+(?:ref_?)?(\d{1,20})\s*$/i);
                 let referrer = m ? m[1] : null;
                 if (referrer === chatId) referrer = null;
-                if (referrer && !(await User.exists({ id: referrer }))) referrer = null;
+                if (referrer && !(await User.exists({ id: referrer }))) {
+                    console.log('Referral: referrer not found in DB', referrer);
+                    referrer = null;
+                }
 
                 const name = displayName(msg.from);
                 const user = await User.findOneAndUpdate(
@@ -863,8 +909,10 @@ app.post('/api/webhook', async (req, res) => {
                     { $set: { username: name } },
                     { upsert: true, new: true, setDefaultsOnInsert: true }
                 );
+                // Referrer sirf tab set hota hai jab user abhi verify nahi hua aur pehle se koi referrer nahi
                 if (referrer && !user.referredBy && !user.isVerified) {
-                    await User.updateOne({ id: chatId, referredBy: null }, { referredBy: referrer });
+                    await User.updateOne({ id: chatId, referredBy: null }, { $set: { referredBy: referrer } });
+                    console.log(`Referral linked: ${chatId} <- ${referrer}`);
                 }
 
                 // Har channel ka button alag row me (poori width)
@@ -978,7 +1026,7 @@ app.get('/admin/dashboard', checkAdmin, wrap(async (req, res) => {
         userBox = `<div class="box">
 <p>👤 <b>${esc(found.username)}</b> | ID: <code>${esc(found.id)}</code></p>
 <p>💰 Balance: <b>${fmtD(found.balance)} ${COIN}</b> | 📤 Total Withdrawn: <b>${fmtD(found.totalWithdrawn)} ${COIN}</b></p>
-<p>✅ Verified: ${found.isVerified ? 'Yes' : 'No'} | 🚫 Banned: ${found.isBanned ? 'Yes' : 'No'} | 👥 Referrals: ${found.referrals.length} | Referred by: ${esc(found.referredBy || 'Direct')}</p>
+<p>✅ Verified: ${found.isVerified ? 'Yes' : 'No'} | 🚫 Banned: ${found.isBanned ? 'Yes' : 'No'} | 👥 Referrals: ${cleanReferrals(found.referrals).length} | Referred by: ${esc(found.referredBy || 'Direct')}</p>
 <p>👆 Today's lines: ${ts.done} / ${ROUNDS_PER_DAY} | 🏦 Wallet: <code>${esc(found.wallet || 'not linked')}</code></p>
 <div class="row"><input type="number" step="any" id="amt" placeholder="Amount (${COIN})">
 <button class="b g" data-act="bal" data-do="add" data-uid="${esc(found.id)}">+ Add</button>
