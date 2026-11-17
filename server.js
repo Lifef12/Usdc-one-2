@@ -103,7 +103,7 @@ const ROUNDS_PER_DAY = 10;
 const ROUND_REWARD = 1e6 * U;        // 1M BabyDoge per line (10 lines = 10M / din)
 const COOLDOWN = 0;                  // line ke baad koi wait nahi (timer band)
 const MAX_TPS = 14;                  // insani limit: taps / second (server isse zyada credit nahi karta)
-const BOT_USERNAME = 'FreeTapXBot';
+const BOT_USERNAME = 'BabydogeTapfiTg_Bot';
 
 // YouTube: Submit ke kitni der baad Claim allowed hoga. 0 = delay nahi.
 const YT_CLAIM_DELAY = 10 * 1000;
@@ -530,7 +530,7 @@ app.use(express.urlencoded({ extended: false, limit: '10kb' }));
 app.use((req, res, next) => { res.setHeader('X-Content-Type-Options', 'nosniff'); next(); });
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('/health', (req, res) => res.send(dbReady() ? 'OK' : 'OK (database connecting)'));
-app.get('/api/ping', (req, res) => res.json({ ok: true, db: dbReady(), version: 'babydoge-tapfi-v1' }));
+app.get('/api/ping', (req, res) => res.json({ ok: true, db: dbReady(), version: 'babydoge-tapfi-v2-referral' }));
 
 // ---------- USER API ----------
 
@@ -894,6 +894,7 @@ app.post('/api/webhook', async (req, res) => {
             if (known && known.isBanned) return sendMsg(chatId, '⚠️ <b>Access Denied:</b> Your account has been banned.');
 
             if (text.startsWith('/start')) {
+                console.log('📩 /start received from', chatId, 'text:', JSON.stringify(text));
                 // /start 123456  |  /start ref123456  |  /start ref_123456  |  /start@Bot 123456
                 const m = text.match(/^\/start(?:@\w+)?\s+(?:ref_?)?(\d{1,20})\s*$/i);
                 let referrer = m ? m[1] : null;
@@ -1014,6 +1015,8 @@ app.get('/admin/dashboard', checkAdmin, wrap(async (req, res) => {
         User.aggregate([{ $group: { _id: null, bal: { $sum: '$balance' }, paid: { $sum: '$totalWithdrawn' } } }])
     ]);
     const s = agg[0] || { bal: 0, paid: 0 };
+    const whi = await tg('getWebhookInfo', {});
+    const wh = whi.ok ? whi.result : {};
     const q = String(req.query.search || '').trim().slice(0, 64);
     const found = q ? await User.findOne({ $or: [{ id: q }, { username: q.startsWith('@') ? q : '@' + q }] }) : null;
 
@@ -1026,7 +1029,7 @@ app.get('/admin/dashboard', checkAdmin, wrap(async (req, res) => {
         userBox = `<div class="box">
 <p>👤 <b>${esc(found.username)}</b> | ID: <code>${esc(found.id)}</code></p>
 <p>💰 Balance: <b>${fmtD(found.balance)} ${COIN}</b> | 📤 Total Withdrawn: <b>${fmtD(found.totalWithdrawn)} ${COIN}</b></p>
-<p>✅ Verified: ${found.isVerified ? 'Yes' : 'No'} | 🚫 Banned: ${found.isBanned ? 'Yes' : 'No'} | 👥 Referrals: ${cleanReferrals(found.referrals).length} | Referred by: ${esc(found.referredBy || 'Direct')}</p>
+<p>✅ Verified: ${found.isVerified ? 'Yes' : 'No'} | 🚫 Banned: ${found.isBanned ? 'Yes' : 'No'} | 👥 Referrals: ${cleanReferrals(found.referrals).length} | Referred by: ${esc(found.referredBy || 'Direct')} | Ref credited: ${found.refCredited ? 'Yes' : 'No'}</p>
 <p>👆 Today's lines: ${ts.done} / ${ROUNDS_PER_DAY} | 🏦 Wallet: <code>${esc(found.wallet || 'not linked')}</code></p>
 <div class="row"><input type="number" step="any" id="amt" placeholder="Amount (${COIN})">
 <button class="b g" data-act="bal" data-do="add" data-uid="${esc(found.id)}">+ Add</button>
@@ -1034,7 +1037,8 @@ app.get('/admin/dashboard', checkAdmin, wrap(async (req, res) => {
 <button class="b r" data-act="ban" data-do="ban" data-uid="${esc(found.id)}">Ban</button>
 <button class="b g" data-act="ban" data-do="unban" data-uid="${esc(found.id)}">Unban</button>
 <button class="b" data-act="dev" data-uid="${esc(found.id)}">Reset Device</button>
-<button class="b" data-act="wal" data-uid="${esc(found.id)}">Reset Wallet</button></div>
+<button class="b" data-act="wal" data-uid="${esc(found.id)}">Reset Wallet</button>
+<button class="b g" data-act="cref" data-uid="${esc(found.id)}">Credit Referral</button></div>
 <div class="row"><input id="smsg" placeholder="Message to this user"><button class="b" data-act="msg" data-uid="${esc(found.id)}">Send</button></div></div>`;
     } else if (q) {
         userBox = '<p style="color:#ef4444">User not found!</p>';
@@ -1053,7 +1057,8 @@ input,textarea{background:#05080f;border:1px solid #2a3a55;color:#fff;padding:10
 .b{background:#19f5a5;color:#031410;border:none;font-weight:bold;padding:9px 14px;border-radius:8px;cursor:pointer}.b.g{background:#22c55e;color:#fff}.b.r{background:#ef4444;color:#fff}
 table{width:100%;border-collapse:collapse}th,td{padding:8px;text-align:left;border-bottom:1px solid #1d2a40;font-size:12px;word-break:break-all}th{color:#7e8ba3}.box{background:#05080f;padding:12px;border-radius:8px;border:1px solid #1d2a40;margin-top:10px;font-size:13px;line-height:1.8}</style></head><body>
 <div class="top"><h1>👑 BabyDoge TapFi Admin</h1><a class="lo" href="/admin/logout">Logout</a></div>
-<p style="font-size:12px;color:#7e8ba3;margin-bottom:12px;word-break:break-all">${payInfo}</p>
+<p style="font-size:12px;color:#7e8ba3;margin-bottom:6px;word-break:break-all">${payInfo}</p>
+<p style="font-size:12px;color:#7e8ba3;margin-bottom:12px;word-break:break-all">Webhook: <code>${esc(wh.url || 'NOT SET')}</code> | Pending: ${esc(wh.pending_update_count || 0)}${wh.last_error_message ? ' | <span style="color:#ef4444">Last error: ' + esc(wh.last_error_message) + '</span>' : ''} | Server: ${esc(PUBLIC_URL || 'PUBLIC_URL not set')}</p>
 <div class="grid">
 <div class="st"><small>Total Users</small><div>${totalUsers}</div></div>
 <div class="st"><small>Verified Users</small><div>${verified}</div></div>
@@ -1071,6 +1076,7 @@ else if(a==='bal'){const amount=document.getElementById('amt').value;if(!amount)
 else if(a==='ban')d=await post('/admin/ban',{userId:b.dataset.uid,action:b.dataset.do});
 else if(a==='dev'){if(!confirm('Reset device lock for this user?'))return;d=await post('/admin/resetdevice',{userId:b.dataset.uid})}
 else if(a==='wal'){if(!confirm('Unlink wallet for this user?'))return;d=await post('/admin/resetwallet',{userId:b.dataset.uid})}
+else if(a==='cref'){d=await post('/admin/creditref',{userId:b.dataset.uid})}
 else if(a==='msg'){const message=document.getElementById('smsg').value;if(!message)return;d=await post('/admin/msg',{userId:b.dataset.uid,message})}
 else if(a==='bc'){const message=document.getElementById('bc').value;if(!message)return;if(!confirm('Send to all users?'))return;d=await post('/admin/broadcast',{message})}
 if(a!=='msg'&&a!=='bc')location.reload()});
@@ -1125,6 +1131,17 @@ app.post('/admin/resetwallet', checkAdmin, wrap(async (req, res) => {
     const u = await User.findOneAndUpdate({ id: String(req.body.userId) }, { $set: { wallet: null } }, { new: true });
     if (!u) return res.json({ ok: false, message: 'User not found' });
     res.json({ ok: true, message: 'Wallet unlinked. User can link a new wallet on next withdraw.' });
+}));
+
+// Manual: verified user ka pending referral bonus referrer ko abhi de do
+app.post('/admin/creditref', checkAdmin, wrap(async (req, res) => {
+    const u = await User.findOne({ id: String(req.body.userId) });
+    if (!u) return res.json({ ok: false, message: 'User not found' });
+    if (!u.referredBy) return res.json({ ok: false, message: 'This user has no referrer (Referred by = Direct). The /start link did not reach the bot.' });
+    if (!u.isVerified) return res.json({ ok: false, message: 'User is not verified yet.' });
+    if (u.refCredited === true) return res.json({ ok: false, message: 'Referral already credited.' });
+    const done = await creditReferral(u.id);
+    res.json({ ok: done, message: done ? 'Referral credited and referrer notified.' : 'Could not credit (referrer not found).' });
 }));
 
 app.post('/admin/msg', checkAdmin, wrap(async (req, res) => {
