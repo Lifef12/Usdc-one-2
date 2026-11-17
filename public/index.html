@@ -478,7 +478,8 @@ body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;ba
       <div class="wd-title">Withdraw BabyDoge</div>
       <div class="wd-net" id="wd-net-txt">Network: BNB Smart Chain (BEP20) · Minimum 80M BabyDoge</div>
 
-      <div class="wd-refbox" id="wd-refbox">
+      <!-- Referral box: sirf tab dikhta hai jab verified referrals 4 se kam hon (JS control karta hai) -->
+      <div class="wd-refbox bad" id="wd-refbox" style="display:none">
         <div class="wr-top"><span>Verified referrals required</span><b id="wr-count">0 / 4</b></div>
         <div class="wr-bar"><i id="wr-fill"></i></div>
         <div class="wr-sub" id="wr-sub">Invite at least 4 verified friends to unlock withdrawals.</div>
@@ -672,6 +673,7 @@ function renderAll() {
 }
 
 // Min withdraw + verified referral requirement (server rules ke mutabiq)
+// Referral box SIRF tab dikhta hai jab referrals kam hon. 4+ referrals par poora hidden (rule background me chalta hai).
 function renderWdRules() {
     const mw = minWd(), mr = minRefs(), rc = refCount();
     const tile = document.getElementById('tile-minwd'); if (tile) tile.innerText = short(mw);
@@ -681,12 +683,15 @@ function renderWdRules() {
     const box = document.getElementById('wd-refbox');
     if (box) {
         const okRefs = rc >= mr;
-        box.classList.toggle('bad', !okRefs);
-        document.getElementById('wr-count').innerText = Math.min(rc, mr) + ' / ' + mr;
-        document.getElementById('wr-fill').style.width = (100 * Math.min(1, rc / mr)).toFixed(0) + '%';
-        document.getElementById('wr-sub').innerText = okRefs
-            ? 'Great! You have ' + rc + ' verified referrals. Withdrawals are unlocked.'
-            : 'Invite at least ' + mr + ' verified friends to unlock withdrawals. You need ' + (mr - rc) + ' more.';
+        if (okRefs) {
+            box.style.display = 'none';
+        } else {
+            box.style.display = 'block';
+            box.classList.add('bad');
+            document.getElementById('wr-count').innerText = rc + ' / ' + mr;
+            document.getElementById('wr-fill').style.width = (100 * Math.min(1, rc / mr)).toFixed(0) + '%';
+            document.getElementById('wr-sub').innerText = 'Invite at least ' + mr + ' verified friends to unlock withdrawals. You need ' + (mr - rc) + ' more.';
+        }
     }
 }
 
