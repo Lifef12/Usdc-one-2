@@ -36,8 +36,6 @@ const fmtD = m => (Number(m) / U).toLocaleString('en-US', { maximumFractionDigit
 
 const TASK_REWARD = 10e6 * U;         // 10M BabyDoge per task (3 tasks)
 const REF_BONUS = 20e6 * U;          // 20M BabyDoge per referral
-const REF_MILESTONE_COUNT = 4;       // 4 referrals poore hone par extra bonus
-const REF_MILESTONE_BONUS = 60e6 * U; // 4 x 20M + 60M = 140M BabyDoge total
 const JOIN_BONUS = 5e6 * U;          // 5M BabyDoge joining bonus (pehli baar verify par)
 const MIN_WITHDRAW = 50e6 * U;      // 50M BabyDoge minimum withdraw
 
@@ -576,13 +574,6 @@ async function creditReferral(userId) {
             `🚀 Keep inviting friends and earn more Baby Doge!`
         ).then(r => { if (!r.ok) console.log('Referral notify failed:', r.description || ''); });
 
-        if (cleanReferrals(ref.referrals).length >= REF_MILESTONE_COUNT) {
-            const ms = await User.findOneAndUpdate(
-                { id: ref.id, refMilestone: { $ne: true } },
-                { $set: { refMilestone: true }, $inc: { balance: REF_MILESTONE_BONUS } }
-            );
-            if (ms) sendMsg(ref.id, `🏆 <b>${REF_MILESTONE_COUNT} referrals completed!</b>\n+${fmtD(REF_MILESTONE_BONUS)} ${COIN} bonus added (total ${fmtD(REF_MILESTONE_COUNT * REF_BONUS + REF_MILESTONE_BONUS)} ${COIN}).`);
-        }
         return true;
     } catch (e) {
         // rollback: agli baar dobara try ho sake
