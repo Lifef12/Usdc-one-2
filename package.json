@@ -1,7 +1,8 @@
 {
-  "name": "freetapxbot",
-  "version": "1.0.0",
-  "description": "FreeTapXBot - BabyDoge TapFi Telegram Mini App tap-to-earn backend",
+  "name": "babydoge-tapfi",
+  "version": "3.0.0",
+  "private": true,
+  "description": "BabyDoge TapFi - Telegram tap to earn bot",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
