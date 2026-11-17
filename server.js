@@ -25,61 +25,66 @@ if (!BOT_TOKEN || !MONGO_URI || !ADMIN_USERNAME || !ADMIN_PASSWORD || !ADMIN_ID)
 
 const WEBHOOK_SECRET = crypto.createHash('sha256').update('wh' + BOT_TOKEN).digest('hex').slice(0, 32);
 
-// ---------- MONEY (USDC) ----------
-// Balance database me INTEGER micro-USDC me rakha jata hai (1 USDC = 1,000,000) taake float ki galti na ho.
+// ---------- MONEY (BabyDoge) ----------
+// Balance database me INTEGER micro-units me rakha jata hai (1 BabyDoge = 1,000,000) taake float ki galti na ho.
+const COIN = 'BabyDoge';
 const U = 1e6;
 const toMicro = x => Math.round(Number(x) * U);
 const fromMicro = m => Math.round(Number(m) || 0) / U;
-const fmtU = m => String(Number((Number(m) / U).toFixed(6)));
+const fmtU = m => String(Number((Number(m) / U).toFixed(6)));          // plain number (on-chain ke liye)
+const fmtD = m => (Number(m) / U).toLocaleString('en-US', { maximumFractionDigits: 2 });   // display (commas)
 
-const TASK_REWARD = 300000;          // 0.3 USDC per task
-const REF_BONUS = 300000;            // 0.3 USDC per referral
-const MIN_WITHDRAW = 2 * U;          // 2 USDC
+const TASK_REWARD = 10e6 * U;         // 10M BabyDoge per task (3 tasks)
+const REF_BONUS = 20e6 * U;          // 20M BabyDoge per referral
+const REF_MILESTONE_COUNT = 4;       // 4 referrals poore hone par extra bonus
+const REF_MILESTONE_BONUS = 60e6 * U; // 4 x 20M + 60M = 140M BabyDoge total
+const JOIN_BONUS = 5e6 * U;          // 5M BabyDoge joining bonus (pehli baar verify par)
+const MIN_WITHDRAW = 50e6 * U;      // 50M BabyDoge minimum withdraw
 
-// ---------- AUTO PAYOUT (USDC BEP-20 / BSC) ----------
+// ---------- AUTO PAYOUT (Baby Doge BEP-20 / BSC) ----------
 // Render env me set karo:
-//   PAYOUT_PRIVATE_KEY = payout wallet ki private key (sirf env me, kabhi code me nahi). Is wallet me USDC + thora BNB (gas) rakho.
+//   PAYOUT_PRIVATE_KEY = payout wallet ki private key (sirf env me, kabhi code me nahi). Is wallet me BabyDoge + thora BNB (gas) rakho.
 //   BSC_RPC            = (optional) default https://bsc-dataseed.binance.org/
 //   AUTO_PAYOUT        = 'false' likho to auto band (admin approve karega). Default: key ho to ON.
-//   MAX_AUTO_PAYOUT    = (optional) is amount (USDC) se bade withdraw admin approval par jayenge. Default 20.
-// Key na ho to purana manual approve system chalta hai.
+//   MAX_AUTO_PAYOUT    = (optional) is amount (BabyDoge) se bade withdraw admin approval par jayenge. Default 100,000,000.
+// Key na ho to manual approve system chalta hai.
 const PAYOUT_PRIVATE_KEY = (process.env.PAYOUT_PRIVATE_KEY || '').trim();
 const BSC_RPC = process.env.BSC_RPC || 'https://bsc-dataseed.binance.org/';
-const USDC_BSC = '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d';   // Binance-Peg USDC (BEP-20), 18 decimals
-const USDC_DECIMALS = 18;
+const TOKEN_BSC = '0xc748673057861a797275CD8A068AbB95A902e8de';   // Baby Doge Coin (BEP-20), 9 decimals
+const TOKEN_DECIMALS = 9;
 const AUTO_PAYOUT = process.env.AUTO_PAYOUT !== 'false';
-const MAX_AUTO_PAYOUT = toMicro(process.env.MAX_AUTO_PAYOUT || 20);
+const MAX_AUTO_PAYOUT = toMicro(process.env.MAX_AUTO_PAYOUT || 100000000);
 const MIN_GAS_BNB = '0.0005';
 
-let payoutWallet = null, usdcContract = null, payoutProvider = null;
+let payoutWallet = null, tokenContract = null, payoutProvider = null;
 if (ethers && PAYOUT_PRIVATE_KEY) {
     try {
         payoutProvider = new ethers.JsonRpcProvider(BSC_RPC, 56, { staticNetwork: ethers.Network.from(56) });
         payoutWallet = new ethers.Wallet(PAYOUT_PRIVATE_KEY, payoutProvider);
-        usdcContract = new ethers.Contract(USDC_BSC, [
+        tokenContract = new ethers.Contract(TOKEN_BSC, [
             'function transfer(address to, uint256 amount) returns (bool)',
             'function balanceOf(address) view returns (uint256)'
         ], payoutWallet);
         console.log('✅ Payout wallet ready:', payoutWallet.address);
     } catch (e) {
         console.error('❌ Invalid PAYOUT_PRIVATE_KEY:', e.message);
-        payoutWallet = null; usdcContract = null;
+        payoutWallet = null; tokenContract = null;
     }
 }
-const payoutReady = () => !!(payoutWallet && usdcContract);
+const payoutReady = () => !!(payoutWallet && tokenContract);
 
-// USDC on-chain bhejo. Success par { hash }, fail par error throw (paise nahi gaye).
-async function sendUsdc(address, microAmount) {
+// BabyDoge on-chain bhejo. Success par { hash }, fail par error throw (paise nahi gaye).
+async function sendToken(address, microAmount) {
     if (!payoutReady()) throw new Error('Payout wallet not configured');
     if (!/^0x[a-fA-F0-9]{40}$/.test(address)) throw new Error('Invalid address');
-    const units = ethers.parseUnits(fmtU(microAmount), USDC_DECIMALS);
+    const units = ethers.parseUnits(fmtU(microAmount), TOKEN_DECIMALS);
 
-    const bal = await usdcContract.balanceOf(payoutWallet.address);
-    if (bal < units) throw new Error('Payout wallet has not enough USDC');
+    const bal = await tokenContract.balanceOf(payoutWallet.address);
+    if (bal < units) throw new Error('Payout wallet has not enough ' + COIN);
     const gas = await payoutProvider.getBalance(payoutWallet.address);
     if (gas < ethers.parseEther(MIN_GAS_BNB)) throw new Error('Payout wallet needs BNB for gas');
 
-    const tx = await usdcContract.transfer(address, units);
+    const tx = await tokenContract.transfer(address, units);
     try {
         const rc = await tx.wait(1, 90000);
         if (rc && rc.status === 0) throw new Error('REVERTED');
@@ -92,10 +97,10 @@ async function sendUsdc(address, microAmount) {
 
 // ---------- TAP SYSTEM ----------
 // Ek line = TAP_TARGET taps. Line poori hone par seedha nayi line (koi wait nahi). Din me ROUNDS_PER_DAY lines.
-// 10 lines x 0.05 = 0.5 USDC / din.  (Frontend ke constants se match hona zaroori hai)
+// 10 lines x 1M = 10M BabyDoge / din.  (Frontend ke constants se match hona zaroori hai)
 const TAP_TARGET = 30;
 const ROUNDS_PER_DAY = 10;
-const ROUND_REWARD = 50000;          // 0.05 USDC per line
+const ROUND_REWARD = 1e6 * U;        // 1M BabyDoge per line (10 lines = 10M / din)
 const COOLDOWN = 0;                  // line ke baad koi wait nahi (timer band)
 const MAX_TPS = 14;                  // insani limit: taps / second (server isse zyada credit nahi karta)
 const BOT_USERNAME = 'FreeTapXBot';
@@ -122,10 +127,10 @@ const PAYMENT_CHANNEL = '@cryptotech16';
 // YouTube tasks (Open -> Submit -> Claim)
 const YT_TASKS = ['yt1', 'yt2'];
 
-const WELCOME_TEXT = 'Hello, welcome to <b>USDC ONE</b>! 🚀 Get ready for an exciting earning experience!\n\n' +
-    'Join us, tap the coin, complete daily challenges, and invite your friends to earn USDC rewards! ' +
+const WELCOME_TEXT = 'Hello, welcome to <b>BabyDoge TapFi</b>! 🐶 Get ready for an exciting earning experience!\n\n' +
+    'Join us, tap the coin, complete daily challenges, and invite your friends to earn BabyDoge rewards! ' +
     'Build your team and boost your daily earnings!\n\n' +
-    '🔥 <b>Let\'s earn with USDC ONE!</b>';
+    '🔥 <b>Let\'s earn with BabyDoge TapFi!</b>';
 
 // ---------- DATABASE (server band nahi hota, DB connect na ho to retry karta hai) ----------
 async function connectDB() {
@@ -144,7 +149,7 @@ const dbReady = () => mongoose.connection.readyState === 1;
 const UserSchema = new mongoose.Schema({
     id: { type: String, required: true, unique: true },
     username: { type: String, default: 'User' },
-    balance: { type: Number, default: 0 },            // micro-USDC (integer)
+    balance: { type: Number, default: 0 },            // micro-units (integer)
     isVerified: { type: Boolean, default: false },
     isBanned: { type: Boolean, default: false },
     tasks: {
@@ -162,8 +167,10 @@ const UserSchema = new mongoose.Schema({
     wallet: { type: String, default: null },
     referredBy: { type: String, default: null },
     refCredited: { type: Boolean, default: false },
+    joinBonus: { type: Boolean, default: false },
+    refMilestone: { type: Boolean, default: false },
     referrals: { type: Array, default: [] },
-    totalWithdrawn: { type: Number, default: 0 },     // micro-USDC
+    totalWithdrawn: { type: Number, default: 0 },     // micro-units
     withdrawals: { type: Array, default: [] },
     createdAt: { type: Number, default: Date.now }
 });
@@ -175,7 +182,7 @@ const User = mongoose.model('User', UserSchema);
 const PendingRequest = mongoose.model('PendingRequest', new mongoose.Schema({
     reqId: { type: String, required: true, unique: true },
     userId: { type: String, required: true, unique: true },
-    amount: { type: Number, required: true },         // micro-USDC
+    amount: { type: Number, required: true },         // micro-units
     address: { type: String, required: true }
 }));
 
@@ -465,7 +472,7 @@ app.use(express.urlencoded({ extended: false, limit: '10kb' }));
 app.use((req, res, next) => { res.setHeader('X-Content-Type-Options', 'nosniff'); next(); });
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('/health', (req, res) => res.send(dbReady() ? 'OK' : 'OK (database connecting)'));
-app.get('/api/ping', (req, res) => res.json({ ok: true, db: dbReady(), version: 'usdc-one-v1' }));
+app.get('/api/ping', (req, res) => res.json({ ok: true, db: dbReady(), version: 'babydoge-tapfi-v1' }));
 
 // ---------- USER API ----------
 
@@ -489,6 +496,13 @@ app.post('/api/verify', auth, wrap(async (req, res) => {
 
     await User.updateOne({ id: u.id }, { isVerified: true });
 
+    // Joining bonus: sirf ek baar
+    const jb = await User.findOneAndUpdate(
+        { id: u.id, joinBonus: { $ne: true } },
+        { $set: { joinBonus: true }, $inc: { balance: JOIN_BONUS } }
+    );
+    const gotJoin = !!jb;
+
     if (u.referredBy && !u.refCredited) {
         const claimed = await User.findOneAndUpdate(
             { id: u.id, refCredited: false },
@@ -498,15 +512,24 @@ app.post('/api/verify', auth, wrap(async (req, res) => {
             const ref = await User.findOneAndUpdate({ id: u.referredBy }, {
                 $inc: { balance: REF_BONUS },
                 $push: { referrals: { id: u.id, date: new Date().toISOString(), bonus: fromMicro(REF_BONUS) } }
-            });
-            if (ref) sendMsg(ref.id, `🎁 <b>New referral joined!</b>\nUser ID: <code>${esc(u.id)}</code>\n+${fmtU(REF_BONUS)} USDC added to your balance.`);
+            }, { new: true });
+            if (ref) {
+                sendMsg(ref.id, `🎁 <b>New referral joined!</b>\nUser ID: <code>${esc(u.id)}</code>\n+${fmtD(REF_BONUS)} ${COIN} added to your balance.`);
+                if (ref.referrals.length >= REF_MILESTONE_COUNT) {
+                    const ms = await User.findOneAndUpdate(
+                        { id: ref.id, refMilestone: { $ne: true } },
+                        { $set: { refMilestone: true }, $inc: { balance: REF_MILESTONE_BONUS } }
+                    );
+                    if (ms) sendMsg(ref.id, `🏆 <b>${REF_MILESTONE_COUNT} referrals completed!</b>\n+${fmtD(REF_MILESTONE_BONUS)} ${COIN} bonus added (total ${fmtD(REF_MILESTONE_COUNT * REF_BONUS + REF_MILESTONE_BONUS)} ${COIN}).`);
+                }
+            }
         }
     }
     const fresh = await User.findOne({ id: u.id });
-    res.json({ ok: true, data: await userView(fresh) });
+    res.json({ ok: true, joinBonus: gotJoin, data: await userView(fresh) });
 }));
 
-// ---------- TAP (har tap par USDC) ----------
+// ---------- TAP (har tap par BabyDoge) ----------
 // Frontend taps batch me bhejta hai: { taps: n }. Server:
 //  - din ki limit (ROUNDS_PER_DAY) aur insani raftaar (MAX_TPS) enforce karta hai
 //  - line poori hote hi counter 0 ho jata hai, seedha nayi line (COOLDOWN = 0)
@@ -645,10 +668,10 @@ app.post('/api/yt/claim', auth, wrap(ytClaim));
 app.post('/api/proof/start', auth, wrap(ytSubmit));
 app.post('/api/proof/claim', auth, wrap(ytClaim));
 
-// ---------- WITHDRAW (USDC BEP-20: Trust Wallet connect ya manual address) ----------
+// ---------- WITHDRAW (BabyDoge BEP-20: manual wallet address) ----------
 // Pehle withdraw par wallet account se lock ho jata hai. Baad me sirf usi wallet par withdraw hoga.
 // Ek wallet sirf ek account par chal sakta hai.
-// Auto payout ON ho aur amount <= MAX_AUTO_PAYOUT ho to USDC seedha on-chain bhej diya jata hai,
+// Auto payout ON ho aur amount <= MAX_AUTO_PAYOUT ho to BabyDoge seedha on-chain bhej diya jata hai,
 // warna admin ko Approve / Reject ka message jata hai.
 const adminButtons = reqId => ({ inline_keyboard: [[{ text: '✅ Approve', callback_data: `approve_${reqId}` }, { text: '❌ Reject', callback_data: `reject_${reqId}` }]] });
 
@@ -661,7 +684,7 @@ app.post('/api/withdraw', auth, wrap(async (req, res) => {
 
     if (!u.isVerified) return res.json({ ok: false, error: 'Please verify channels first.' });
     if (!/^0x[a-fA-F0-9]{40}$/.test(address)) return res.json({ ok: false, error: 'Invalid BEP-20 wallet address!' });
-    if (!Number.isFinite(amt) || amt < MIN_WITHDRAW) return res.json({ ok: false, error: `Minimum withdrawal is ${fmtU(MIN_WITHDRAW)} USDC!` });
+    if (!Number.isFinite(amt) || amt < MIN_WITHDRAW) return res.json({ ok: false, error: `Minimum withdrawal is ${fmtD(MIN_WITHDRAW)} ${COIN}!` });
 
     const guard = await telegramGuard(u);
     if (guard) return res.json({ ok: false, error: guard });
@@ -719,7 +742,7 @@ app.post('/api/withdraw', auth, wrap(async (req, res) => {
 
     // MANUAL: admin approve karega
     sendMsg(ADMIN_ID,
-        `📤 <b>New Withdraw Request</b>\n\n👤 User ID: <code>${esc(u.id)}</code>\n💰 Amount: <b>${fmtU(amt)} USDC</b> (BEP-20)\n🏦 Address: <code>${esc(address)}</code>`,
+        `📤 <b>New Withdraw Request</b>\n\n👤 User ID: <code>${esc(u.id)}</code>\n💰 Amount: <b>${fmtD(amt)} ${COIN}</b> (BEP-20)\n🏦 Address: <code>${esc(address)}</code>`,
         adminButtons(reqId)
     );
     res.json({ ok: true, data: view });
@@ -728,11 +751,11 @@ app.post('/api/withdraw', auth, wrap(async (req, res) => {
 async function autoPayout(reqId, userId, amt, address) {
     const r = await resolveWithdraw(reqId, true);
     if (r.ok) {
-        sendMsg(ADMIN_ID, `🤖 <b>Auto payout sent</b>\n\n👤 User ID: <code>${esc(userId)}</code>\n💰 ${fmtU(amt)} USDC (BEP-20)\n🏦 <code>${esc(address)}</code>` +
+        sendMsg(ADMIN_ID, `🤖 <b>Auto payout sent</b>\n\n👤 User ID: <code>${esc(userId)}</code>\n💰 ${fmtD(amt)} ${COIN} (BEP-20)\n🏦 <code>${esc(address)}</code>` +
             (r.txHash ? `\n🔗 https://bscscan.com/tx/${esc(r.txHash)}` : ''));
     } else {
         sendMsg(ADMIN_ID,
-            `⚠️ <b>Auto payout failed</b>\n\n👤 User ID: <code>${esc(userId)}</code>\n💰 ${fmtU(amt)} USDC (BEP-20)\n🏦 <code>${esc(address)}</code>\n\nReason: ${esc(r.message || 'unknown')}` +
+            `⚠️ <b>Auto payout failed</b>\n\n👤 User ID: <code>${esc(userId)}</code>\n💰 ${fmtD(amt)} ${COIN} (BEP-20)\n🏦 <code>${esc(address)}</code>\n\nReason: ${esc(r.message || 'unknown')}` +
             (r.restored ? '\n\nRequest is pending. Fix the issue and approve manually, or reject to refund.' : ''),
             r.restored ? adminButtons(reqId) : undefined
         );
@@ -749,7 +772,7 @@ async function markPaid(pr, txHash) {
         { $set: set, $inc: { totalWithdrawn: pr.amount } },
         { arrayFilters: [{ 'w.id': pr.reqId }], new: true }
     );
-    sendMsg(pr.userId, `✅ Your withdrawal of <b>${fmtU(pr.amount)} USDC</b> has been paid!` +
+    sendMsg(pr.userId, `✅ Your withdrawal of <b>${fmtD(pr.amount)} ${COIN}</b> has been paid!` +
         (txHash ? `\n🔗 <a href="https://bscscan.com/tx/${esc(txHash)}">View transaction</a>` : ''));
 
     // Auto payment proof: channel me username + ID + amount + address post hota hai
@@ -758,10 +781,10 @@ async function markPaid(pr, txHash) {
         `✅ <b>New Payment Sent!</b>\n\n` +
         `👤 User: <b>${esc(uname)}</b>\n` +
         `🆔 ID: <code>${esc(pr.userId)}</code>\n` +
-        `💰 Amount: <b>${fmtU(pr.amount)} USDC</b> (BEP-20)\n` +
+        `💰 Amount: <b>${fmtD(pr.amount)} ${COIN}</b> (BEP-20)\n` +
         `🏦 Address: <code>${esc(pr.address)}</code>\n` +
         (txHash ? `🔗 <a href="https://bscscan.com/tx/${esc(txHash)}">Transaction</a>\n` : '') +
-        `\n🚀 Earn free USDC with @${BOT_USERNAME}`
+        `\n🚀 Earn free ${COIN} with @${BOT_USERNAME}`
     ).then(r => { if (!r.ok) console.log('Payment channel post failed:', r.description || ''); });
 }
 
@@ -776,7 +799,7 @@ async function restorePending(pr) {
             { $set: { 'withdrawals.$[w].status': 'DECLINED' }, $inc: { balance: pr.amount } },
             { arrayFilters: [{ 'w.id': pr.reqId }] }
         );
-        sendMsg(pr.userId, `❌ Your withdrawal of <b>${fmtU(pr.amount)} USDC</b> could not be processed and the amount was refunded.`);
+        sendMsg(pr.userId, `❌ Your withdrawal of <b>${fmtD(pr.amount)} ${COIN}</b> could not be processed and the amount was refunded.`);
         return false;
     }
 }
@@ -790,7 +813,7 @@ async function resolveWithdraw(reqId, approve) {
         if (payoutReady()) {
             try {
                 // ek waqt me ek hi on-chain payment (nonce clash se bachao)
-                const out = await withLock('payout', () => sendUsdc(pr.address, pr.amount));
+                const out = await withLock('payout', () => sendToken(pr.address, pr.amount));
                 txHash = out.hash;
             } catch (e) {
                 console.log('Payout failed:', e.message);
@@ -805,7 +828,7 @@ async function resolveWithdraw(reqId, approve) {
             { $set: { 'withdrawals.$[w].status': 'DECLINED' }, $inc: { balance: pr.amount } },
             { arrayFilters: [{ 'w.id': String(reqId) }] }
         );
-        sendMsg(pr.userId, `❌ Your withdrawal of <b>${fmtU(pr.amount)} USDC</b> was declined and the amount was refunded.`);
+        sendMsg(pr.userId, `❌ Your withdrawal of <b>${fmtD(pr.amount)} ${COIN}</b> was declined and the amount was refunded.`);
     }
     return { ok: true, pr, txHash };
 }
@@ -844,14 +867,14 @@ app.post('/api/webhook', async (req, res) => {
                     await User.updateOne({ id: chatId, referredBy: null }, { referredBy: referrer });
                 }
 
-                // Har channel ka button alag row me (poori width), screenshot ki tarah
+                // Har channel ka button alag row me (poori width)
                 const kb = [
                     [{ text: '📢 Official Updates Channel', url: CHANNEL_UPDATES.url }],
                     [{ text: '💸 Official Payouts Channel', url: CHANNEL_PAYOUTS.url }]
                 ];
                 await sendMsg(chatId, WELCOME_TEXT, { inline_keyboard: kb });
             } else if (text === '/admin' && chatId === ADMIN_ID) {
-                await sendMsg(chatId, '👑 <b>USDC ONE Admin</b>',
+                await sendMsg(chatId, '👑 <b>BabyDoge TapFi Admin</b>',
                     PUBLIC_URL ? { inline_keyboard: [[{ text: '🔐 Admin Login Panel', url: `${PUBLIC_URL}/admin/login` }]] } : undefined);
             }
 
@@ -873,7 +896,7 @@ app.post('/api/webhook', async (req, res) => {
                 chat_id: chatId,
                 message_id: q.message.message_id,
                 parse_mode: 'HTML',
-                text: `${approve ? '✅ <b>Approved</b>' : '❌ <b>Rejected</b>'}\nUser ID: ${esc(r.pr.userId)}\nAmount: ${fmtU(r.pr.amount)} USDC`
+                text: `${approve ? '✅ <b>Approved</b>' : '❌ <b>Rejected</b>'}\nUser ID: ${esc(r.pr.userId)}\nAmount: ${fmtD(r.pr.amount)} ${COIN}`
             });
             tg('answerCallbackQuery', { callback_query_id: q.id, text: 'Done!' });
         }
@@ -905,7 +928,7 @@ function checkAdmin(req, res, next) {
 app.get('/admin/login', (req, res) => {
     res.send(`<!DOCTYPE html><html><head><title>Admin Login</title><meta name="viewport" content="width=device-width, initial-scale=1.0">
 <style>*{box-sizing:border-box;font-family:'Segoe UI',sans-serif}body{background:#05080f;color:#fff;display:flex;justify-content:center;align-items:center;height:100vh;margin:0}.c{background:#0c121d;border:1px solid #1d2a40;padding:30px;border-radius:16px;width:90%;max-width:360px;text-align:center}h2{color:#19f5a5}input{width:100%;padding:12px;margin-bottom:12px;background:#05080f;border:1px solid #2a3a55;color:#fff;border-radius:8px}button{width:100%;padding:12px;background:#19f5a5;color:#031410;font-weight:bold;border:none;border-radius:8px;cursor:pointer}</style></head>
-<body><div class="c"><h2>🔐 USDC ONE Admin</h2><form action="/admin/login" method="POST"><input name="username" placeholder="Username" required><input type="password" name="password" placeholder="Password" required><button>Login</button></form></div></body></html>`);
+<body><div class="c"><h2>🔐 BabyDoge TapFi Admin</h2><form action="/admin/login" method="POST"><input name="username" placeholder="Username" required><input type="password" name="password" placeholder="Password" required><button>Login</button></form></div></body></html>`);
 });
 
 app.post('/admin/login', (req, res) => {
@@ -946,7 +969,7 @@ app.get('/admin/dashboard', checkAdmin, wrap(async (req, res) => {
     const q = String(req.query.search || '').trim().slice(0, 64);
     const found = q ? await User.findOne({ $or: [{ id: q }, { username: q.startsWith('@') ? q : '@' + q }] }) : null;
 
-    const reqRows = pending.map(r => `<tr><td>${esc(r.userId)}</td><td><b>${fmtU(r.amount)} USDC</b></td><td><code>${esc(r.address)}</code></td>
+    const reqRows = pending.map(r => `<tr><td>${esc(r.userId)}</td><td><b>${fmtD(r.amount)} ${COIN}</b></td><td><code>${esc(r.address)}</code></td>
 <td><button class="b g" data-act="req" data-do="approve" data-id="${esc(r.reqId)}">Approve</button> <button class="b r" data-act="req" data-do="reject" data-id="${esc(r.reqId)}">Reject</button></td></tr>`).join('');
 
     let userBox = '';
@@ -954,10 +977,10 @@ app.get('/admin/dashboard', checkAdmin, wrap(async (req, res) => {
         const ts = tapState(found);
         userBox = `<div class="box">
 <p>👤 <b>${esc(found.username)}</b> | ID: <code>${esc(found.id)}</code></p>
-<p>💰 Balance: <b>${fmtU(found.balance)} USDC</b> | 📤 Total Withdrawn: <b>${fmtU(found.totalWithdrawn)} USDC</b></p>
+<p>💰 Balance: <b>${fmtD(found.balance)} ${COIN}</b> | 📤 Total Withdrawn: <b>${fmtD(found.totalWithdrawn)} ${COIN}</b></p>
 <p>✅ Verified: ${found.isVerified ? 'Yes' : 'No'} | 🚫 Banned: ${found.isBanned ? 'Yes' : 'No'} | 👥 Referrals: ${found.referrals.length} | Referred by: ${esc(found.referredBy || 'Direct')}</p>
 <p>👆 Today's lines: ${ts.done} / ${ROUNDS_PER_DAY} | 🏦 Wallet: <code>${esc(found.wallet || 'not linked')}</code></p>
-<div class="row"><input type="number" step="any" id="amt" placeholder="Amount (USDC)">
+<div class="row"><input type="number" step="any" id="amt" placeholder="Amount (${COIN})">
 <button class="b g" data-act="bal" data-do="add" data-uid="${esc(found.id)}">+ Add</button>
 <button class="b r" data-act="bal" data-do="cut" data-uid="${esc(found.id)}">- Cut</button>
 <button class="b r" data-act="ban" data-do="ban" data-uid="${esc(found.id)}">Ban</button>
@@ -970,10 +993,10 @@ app.get('/admin/dashboard', checkAdmin, wrap(async (req, res) => {
     }
 
     const payInfo = payoutReady()
-        ? `Auto payout: <b>${AUTO_PAYOUT ? 'ON' : 'OFF'}</b> (max ${fmtU(MAX_AUTO_PAYOUT)} USDC) | Wallet: <code>${esc(payoutWallet.address)}</code>`
+        ? `Auto payout: <b>${AUTO_PAYOUT ? 'ON' : 'OFF'}</b> (max ${fmtD(MAX_AUTO_PAYOUT)} ${COIN}) | Wallet: <code>${esc(payoutWallet.address)}</code>`
         : 'Auto payout: <b>not configured</b> (manual approve)';
 
-    res.send(`<!DOCTYPE html><html><head><title>USDC ONE Admin</title><meta name="viewport" content="width=device-width, initial-scale=1.0">
+    res.send(`<!DOCTYPE html><html><head><title>BabyDoge TapFi Admin</title><meta name="viewport" content="width=device-width, initial-scale=1.0">
 <style>*{box-sizing:border-box;font-family:'Segoe UI',sans-serif}body{background:#05080f;color:#f3f4f6;margin:0;padding:16px}h1{color:#19f5a5;font-size:22px;margin:0}.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
 .lo{background:#ef4444;color:#fff;padding:6px 12px;border-radius:6px;text-decoration:none;font-size:12px;font-weight:bold}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:16px}
 .st{background:#0c121d;border:1px solid #1d2a40;border-radius:12px;padding:14px}.st small{color:#7e8ba3;font-size:11px;text-transform:uppercase}.st div{font-size:19px;font-weight:bold;color:#19f5a5;margin-top:6px}
@@ -981,13 +1004,13 @@ app.get('/admin/dashboard', checkAdmin, wrap(async (req, res) => {
 input,textarea{background:#05080f;border:1px solid #2a3a55;color:#fff;padding:10px;border-radius:8px;width:100%;font-size:14px}.row{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}.row input{flex:1;min-width:120px}
 .b{background:#19f5a5;color:#031410;border:none;font-weight:bold;padding:9px 14px;border-radius:8px;cursor:pointer}.b.g{background:#22c55e;color:#fff}.b.r{background:#ef4444;color:#fff}
 table{width:100%;border-collapse:collapse}th,td{padding:8px;text-align:left;border-bottom:1px solid #1d2a40;font-size:12px;word-break:break-all}th{color:#7e8ba3}.box{background:#05080f;padding:12px;border-radius:8px;border:1px solid #1d2a40;margin-top:10px;font-size:13px;line-height:1.8}</style></head><body>
-<div class="top"><h1>👑 USDC ONE Admin</h1><a class="lo" href="/admin/logout">Logout</a></div>
+<div class="top"><h1>👑 BabyDoge TapFi Admin</h1><a class="lo" href="/admin/logout">Logout</a></div>
 <p style="font-size:12px;color:#7e8ba3;margin-bottom:12px;word-break:break-all">${payInfo}</p>
 <div class="grid">
 <div class="st"><small>Total Users</small><div>${totalUsers}</div></div>
 <div class="st"><small>Verified Users</small><div>${verified}</div></div>
-<div class="st"><small>Users' Balance</small><div>${fmtU(s.bal)} USDC</div></div>
-<div class="st"><small>Paid Out</small><div>${fmtU(s.paid)} USDC</div></div>
+<div class="st"><small>Users' Balance</small><div>${fmtD(s.bal)} ${COIN}</div></div>
+<div class="st"><small>Paid Out</small><div>${fmtD(s.paid)} ${COIN}</div></div>
 <div class="st"><small>Pending Requests</small><div>${pending.length}</div></div></div>
 <div class="card"><h3>⏳ Pending Withdrawal Requests</h3>${pending.length ? `<table><tr><th>User ID</th><th>Amount</th><th>Wallet (BEP-20)</th><th>Action</th></tr>${reqRows}</table>` : '<p style="color:#7e8ba3;font-size:12px">No pending requests.</p>'}</div>
 <div class="card"><h3>🔍 Search & Manage User</h3><form method="GET" class="row"><input name="search" placeholder="Telegram ID or @username" value="${esc(q)}"><button class="b">Search</button></form>${userBox}</div>
@@ -1017,7 +1040,7 @@ app.post('/admin/action', checkAdmin, wrap(async (req, res) => {
 app.post('/admin/balance', checkAdmin, wrap(async (req, res) => {
     const { userId, action } = req.body;
     const amt = toMicro(req.body.amount);
-    if (!Number.isFinite(amt) || amt <= 0 || amt > 100000 * U) return res.json({ ok: false, message: 'Invalid amount' });
+    if (!Number.isFinite(amt) || amt <= 0 || amt > 1e9 * U) return res.json({ ok: false, message: 'Invalid amount' });
 
     let u;
     if (action === 'add') {
@@ -1032,9 +1055,9 @@ app.post('/admin/balance', checkAdmin, wrap(async (req, res) => {
     if (!u) return res.json({ ok: false, message: 'User not found or balance too low' });
 
     sendMsg(u.id, action === 'add'
-        ? `🎁 Admin added +${fmtU(amt)} USDC to your balance!`
-        : `⚠️ Admin deducted ${fmtU(amt)} USDC from your balance.`);
-    res.json({ ok: true, message: `Done. New balance: ${fmtU(u.balance)} USDC` });
+        ? `🎁 Admin added +${fmtD(amt)} ${COIN} to your balance!`
+        : `⚠️ Admin deducted ${fmtD(amt)} ${COIN} from your balance.`);
+    res.json({ ok: true, message: `Done. New balance: ${fmtD(u.balance)} ${COIN}` });
 }));
 
 app.post('/admin/ban', checkAdmin, wrap(async (req, res) => {
@@ -1082,7 +1105,7 @@ app.use('/api', (req, res) => res.status(404).json({ ok: false, error: 'Not foun
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
     console.log(`Server running on port ${PORT}`);
-    console.log(payoutReady() ? `💸 Auto payout: ${AUTO_PAYOUT ? 'ON' : 'OFF'} (max ${fmtU(MAX_AUTO_PAYOUT)} USDC)` : '💸 Auto payout: not configured (manual approve)');
+    console.log(payoutReady() ? `💸 Auto payout: ${AUTO_PAYOUT ? 'ON' : 'OFF'} (max ${fmtD(MAX_AUTO_PAYOUT)} ${COIN})` : '💸 Auto payout: not configured (manual approve)');
     if (PUBLIC_URL.startsWith('https://')) {
         const r = await tg('setWebhook', {
             url: `${PUBLIC_URL}/api/webhook`,
