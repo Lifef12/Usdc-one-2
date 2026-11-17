@@ -125,6 +125,12 @@ const PAYMENT_CHANNEL = '@cryptotech16';
 // YouTube tasks (Open -> Submit -> Claim)
 const YT_TASKS = ['yt1', 'yt2'];
 
+// Welcome message ke saath dikhne wali image/GIF (DIRECT link hona zaroori hai: i.ibb.co/...)
+// Env me WELCOME_IMG set karke badal sakte ho. Khali ('') likho to sirf text jayega.
+const WELCOME_IMG = process.env.WELCOME_IMG !== undefined
+    ? process.env.WELCOME_IMG
+    : 'https://i.ibb.co/KpB6QLQF/baby-doge-mining-animation.gif';
+
 const WELCOME_TEXT = 'Hello, welcome to <b>BabyDoge TapFi</b>! 🐶 Get ready for an exciting earning experience!\n\n' +
     'Join us, tap the coin, complete daily challenges, and invite your friends to earn BabyDoge rewards! ' +
     'Build your team and boost your daily earnings!\n\n' +
@@ -311,6 +317,23 @@ async function tg(method, body) {
 
 const sendMsg = (chat_id, text, reply_markup, html = true) =>
     tg('sendMessage', { chat_id, text, reply_markup, ...(html ? { parse_mode: 'HTML' } : {}) });
+
+// Welcome: pehle image/GIF + caption (text + buttons). Image fail ho to sirf text bhej do.
+async function sendWelcome(chatId, reply_markup) {
+    if (WELCOME_IMG) {
+        const isGif = /\.(gif|mp4)(\?.*)?$/i.test(WELCOME_IMG);
+        const r = await tg(isGif ? 'sendAnimation' : 'sendPhoto', {
+            chat_id: chatId,
+            [isGif ? 'animation' : 'photo']: WELCOME_IMG,
+            caption: WELCOME_TEXT,        // caption limit 1024 chars (abhi ~400)
+            parse_mode: 'HTML',
+            reply_markup
+        });
+        if (r.ok) return r;
+        console.log('Welcome image failed, sending text only:', r.description || '');
+    }
+    return sendMsg(chatId, WELCOME_TEXT, reply_markup);
+}
 
 // true = member, false = not member, null = Telegram error
 async function isMember(channel, userId) {
@@ -997,7 +1020,8 @@ app.post('/api/webhook', async (req, res) => {
                     [{ text: '📢 Official Updates Channel', url: CHANNEL_UPDATES.url }],
                     [{ text: '💸 Official Payouts Channel', url: CHANNEL_PAYOUTS.url }]
                 ];
-                await sendMsg(chatId, WELCOME_TEXT, { inline_keyboard: kb });
+                // Image/GIF + welcome text + buttons
+                await sendWelcome(chatId, { inline_keyboard: kb });
             } else if (text === '/admin' && chatId === ADMIN_ID) {
                 await sendMsg(chatId, '👑 <b>BabyDoge TapFi Admin</b>',
                     PUBLIC_URL ? { inline_keyboard: [[{ text: '🔐 Admin Login Panel', url: `${PUBLIC_URL}/admin/login` }]] } : undefined);
