@@ -15,13 +15,76 @@ body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;ba
 #toast-notification{position:fixed;top:14px;left:50%;transform:translateX(-50%) translateY(-120px);background:rgba(12,18,29,.96);backdrop-filter:blur(12px);color:#fff;padding:13px 16px;border-radius:16px;font-size:13px;font-weight:600;display:flex;align-items:center;gap:12px;border:1px solid rgba(25,245,165,.5);z-index:999999999;transition:transform .35s;width:92%;max-width:400px}
 #toast-notification.show{transform:translateX(-50%) translateY(0)}
 #toast-notification i{color:#04140e;background:var(--g1);padding:7px;border-radius:50%;font-size:11px}
+/* ===== STARTUP ===== */
+#splash-screen{position:fixed;inset:0;z-index:999999998;background:linear-gradient(160deg,#0b2140 0%,#05080f 55%,#03050a 100%);color:#fff;overflow-y:auto;overflow-x:hidden;transition:opacity .3s;--ax-r1:#19f5a5;--ax-r2:#31d0ff}
+#splash-screen.ax-done{--ax-r1:#22e58b;--ax-r2:#4ade80}
+#splash-screen.ax-blocked{--ax-r1:#fb4d6d;--ax-r2:#fb7185}
+#ax-bg{position:fixed;inset:0;width:100%;height:100%;z-index:0}
+.ax-glow{position:fixed;width:460px;height:460px;border-radius:50%;filter:blur(120px);opacity:.3;z-index:0;pointer-events:none}
+.ax-g1{background:#2775ca;top:-160px;left:-140px}
+.ax-g2{background:#19f5a5;bottom:-200px;right:-160px;opacity:.22}
+.ax-floor{position:fixed;left:-50%;bottom:0;width:200%;height:46%;z-index:0;pointer-events:none;background:linear-gradient(rgba(49,208,255,.2) 1px,transparent 1px) 0 0/60px 60px,linear-gradient(90deg,rgba(49,208,255,.2) 1px,transparent 1px) 0 0/60px 60px;transform:perspective(320px) rotateX(62deg);transform-origin:bottom;-webkit-mask-image:linear-gradient(to top,#000 10%,transparent 90%);mask-image:linear-gradient(to top,#000 10%,transparent 90%);animation:ax-grid 3s linear infinite}
+@keyframes ax-grid{to{background-position:0 60px,60px 0}}
+.ax-page{position:relative;z-index:1;min-height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:18px 16px 22px;perspective:1100px}
+.ax-stage{position:relative;width:min(36vw,22vh,150px);aspect-ratio:1;margin:34px 0 30px;transform-style:preserve-3d;transform:rotateX(var(--rx,0deg)) rotateY(var(--ry,0deg));transition:transform .15s ease-out}
+.ax-float{position:absolute;inset:0;transform-style:preserve-3d;animation:ax-floaty 4s ease-in-out infinite}
+@keyframes ax-floaty{0%,100%{transform:translateY(0) rotateY(-8deg)}50%{transform:translateY(-8px) rotateY(8deg)}}
+.ax-ring{position:absolute;border-radius:50%;border:2px solid transparent;transform-style:preserve-3d}
+.ax-ring.r1{inset:-12%;border-top-color:var(--ax-r1);border-bottom-color:var(--ax-r2);animation:ax-s1 6s linear infinite;box-shadow:0 0 22px rgba(49,208,255,.35)}
+.ax-ring.r2{inset:-24%;border-left-color:var(--ax-r2);border-right-color:var(--ax-r1);animation:ax-s2 9s linear infinite}
+.ax-ring.r3{inset:-36%;border-top-color:var(--ax-r1);border-left-color:var(--ax-r2);opacity:.6;animation:ax-s3 13s linear infinite}
+@keyframes ax-s1{from{transform:rotateX(72deg) rotateZ(0)}to{transform:rotateX(72deg) rotateZ(360deg)}}
+@keyframes ax-s2{from{transform:rotateY(72deg) rotateZ(0)}to{transform:rotateY(72deg) rotateZ(-360deg)}}
+@keyframes ax-s3{from{transform:rotateX(58deg) rotateY(38deg) rotateZ(0)}to{transform:rotateX(58deg) rotateY(38deg) rotateZ(360deg)}}
+.ax-ring i{position:absolute;top:-5px;left:50%;width:8px;height:8px;margin-left:-4px;border-radius:50%;background:var(--ax-r1);box-shadow:0 0 12px 3px var(--ax-r1)}
+.ax-core{position:absolute;inset:0;display:grid;place-items:center;transform:translateZ(40px)}
+.ax-core::before{content:"";position:absolute;inset:4%;border-radius:50%;background:radial-gradient(circle,rgba(25,245,165,.55),transparent 70%);filter:blur(12px);animation:ax-breathe 2.6s ease-in-out infinite}
+#splash-screen.ax-done .ax-core::before{background:radial-gradient(circle,rgba(34,229,139,.5),transparent 70%)}
+#splash-screen.ax-blocked .ax-core::before{background:radial-gradient(circle,rgba(251,77,109,.5),transparent 70%)}
+@keyframes ax-breathe{50%{transform:scale(1.25);opacity:.7}}
+.ax-core img{position:relative;width:78%;height:78%;object-fit:contain;filter:drop-shadow(0 6px 18px rgba(25,245,165,.6))}
+.ax-fbbox{display:none;position:relative;width:78%;height:78%;background:#000;border-radius:26%;place-items:center;box-shadow:0 0 0 2px var(--or),0 0 26px rgba(25,245,165,.4)}
+.ax-fbbox svg{width:70%;height:70%}
+.ax-core.ax-fallback img{display:none}
+.ax-core.ax-fallback .ax-fbbox{display:grid}
+.ax-shadow{position:absolute;left:15%;right:15%;bottom:-34%;height:14%;border-radius:50%;background:radial-gradient(ellipse,rgba(25,245,165,.4),transparent 70%);filter:blur(6px);transform:translateZ(-60px) rotateX(80deg);animation:ax-sh 4s ease-in-out infinite}
+@keyframes ax-sh{50%{transform:translateZ(-60px) rotateX(80deg) scale(.8);opacity:.6}}
+.ax-title{text-align:center;margin-top:4px}
+.ax-title h1{font-size:clamp(22px,6.6vw,30px);letter-spacing:5px;font-weight:800;padding-left:5px;background:var(--g1);-webkit-background-clip:text;background-clip:text;color:transparent}
+.ax-title h2{margin-top:8px;font-size:12px;font-weight:600;letter-spacing:4px;color:var(--or);padding-left:4px}
+.ax-title p{margin:10px auto 0;max-width:300px;font-size:13px;line-height:1.5;color:var(--mu)}
+.ax-card{width:100%;max-width:420px;margin-top:16px;padding:10px 16px 18px;border-radius:28px;position:relative;overflow:hidden;background:var(--glass);backdrop-filter:blur(14px);border:1px solid var(--bd);box-shadow:0 10px 30px rgba(0,0,0,.4)}
+.ax-card::before{content:"";position:absolute;left:0;top:0;height:2px;width:100%;background:linear-gradient(90deg,transparent,#31d0ff,transparent);animation:ax-scan 2.6s linear infinite}
+@keyframes ax-scan{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
+.ax-step{display:flex;align-items:center;gap:12px;padding:12px 14px;margin:10px 0;background:var(--ink);border:1px solid var(--bd);border-radius:18px;opacity:.55;transition:opacity .3s}
+.ax-step.active,.ax-step.done,.ax-step.fail{opacity:1}
+.ax-icon{position:relative;width:32px;height:32px;flex:none;border-radius:50%;border:2px solid var(--bd);display:grid;place-items:center;font-weight:800;font-size:14px;transition:all .3s}
+.ax-step.active .ax-icon{border-color:var(--or);border-top-color:transparent;animation:ax-spin .8s linear infinite;box-shadow:0 0 14px rgba(25,245,165,.5)}
+.ax-step.done .ax-icon{border-color:var(--ok);background:var(--ok);color:#04281a;animation:none;box-shadow:0 0 16px rgba(34,229,139,.5)}
+.ax-step.done .ax-icon::after{content:"✓"}
+.ax-step.fail .ax-icon{border-color:var(--bad);background:var(--bad);color:#2a0510}
+.ax-step.fail .ax-icon::after{content:"!"}
+@keyframes ax-spin{to{transform:rotate(360deg)}}
+.ax-info{flex:1;min-width:0;text-align:left}
+.ax-info b{display:block;font-size:13.5px;font-weight:600;color:#fff}
+.ax-info small{display:block;margin-top:3px;font-size:11.5px;font-weight:500;color:var(--mu)}
+.ax-step.done .ax-info small{color:var(--ok)}
+.ax-step.fail .ax-info small{color:var(--bad)}
+.ax-chip{font-size:10px;font-weight:700;padding:4px 10px;border-radius:99px;border:1px solid var(--bd);color:var(--mu);background:rgba(255,255,255,.05);white-space:nowrap}
+.ax-step.active .ax-chip{color:var(--or);border-color:rgba(25,245,165,.5)}
+.ax-step.done .ax-chip{color:var(--ok);background:rgba(34,229,139,.12);border-color:rgba(34,229,139,.4)}
+.ax-step.fail .ax-chip{color:var(--bad);border-color:rgba(251,77,109,.6)}
+.ax-bar{height:10px;margin-top:10px;border-radius:99px;overflow:hidden;background:var(--ink);border:1px solid var(--bd)}
+.ax-bar i{display:block;height:100%;width:0;background:var(--g1);transition:width .35s ease;box-shadow:0 0 14px rgba(49,208,255,.6)}
+#splash-screen.ax-done .ax-bar i{background:linear-gradient(90deg,#22e58b,#4ade80);box-shadow:0 0 14px var(--ok)}
+#splash-screen.ax-blocked .ax-bar i{background:linear-gradient(90deg,#fb4d6d,#fb7185);box-shadow:0 0 14px var(--bad)}
+.ax-meta{display:flex;justify-content:space-between;margin-top:8px;font-size:11px;font-weight:600;color:var(--mu)}
+.ax-tag{margin-top:18px;font-size:11px;font-weight:600;letter-spacing:4px;color:var(--mu);text-align:center;padding-left:4px}
+.ax-tag b{color:var(--or);font-weight:600}
+.ax-block{display:none;margin-top:14px;padding:12px 14px;border-radius:16px;background:rgba(251,77,109,.12);border:1px solid rgba(251,77,109,.5);color:#fda4af;font-size:12px;line-height:1.5;text-align:center;font-weight:500}
+.ax-block b{font-weight:800;color:var(--bad);font-size:14px}
 
-/* LOADER */
-#ax-loader{position:fixed;inset:0;z-index:999999997;background:#05080f;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:var(--mu);font-size:13px;font-weight:600}
-.ax-spin{width:44px;height:44px;border-radius:50%;border:3px solid rgba(255,255,255,.12);border-top-color:var(--or);animation:spin .8s linear infinite}
-@keyframes spin{to{transform:rotate(360deg)}}
-
-/* VERIFY */
+/* ===== VERIFY ===== */
 #verification-screen{position:fixed;inset:0;background:linear-gradient(160deg,#0b2140 0%,#05080f 55%,#03050a 100%);display:none;flex-direction:column;justify-content:center;align-items:center;z-index:99999999;padding:20px;text-align:center;overflow-y:auto}
 .verify-logo-box{width:100px;height:100px;background:#000;border-radius:28px;display:flex;justify-content:center;align-items:center;border:2px solid var(--or);position:relative;z-index:2;box-shadow:0 0 40px rgba(25,245,165,.45);flex-shrink:0}
 .verify-card{background:var(--glass);backdrop-filter:blur(14px);border:1px solid var(--bd);box-shadow:0 10px 40px rgba(0,0,0,.5);width:100%;max-width:380px;border-radius:32px;padding:50px 20px 24px;margin-top:-45px}
@@ -31,16 +94,10 @@ body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;ba
 .channel-badge{background:var(--g1);color:#fff;border-radius:14px;display:flex;flex-direction:column;align-items:center;gap:4px;min-width:64px;padding:12px 8px;font-size:16px}
 .channel-badge em{font-style:normal;font-size:9px;font-weight:800;letter-spacing:1px}
 .channel-details h5{font-size:15px;color:#fff;font-weight:700}
+.channel-details span{font-size:13px;color:var(--mu)}
 
-/* BLOCKED */
-#blocked-screen{display:none;position:fixed;inset:0;z-index:1000000000;align-items:center;justify-content:center;padding:20px;background:linear-gradient(160deg,#0b2140 0%,#05080f 55%,#03050a 100%)}
-.bk-box{width:100%;max-width:380px;text-align:center;padding:34px 22px;border-radius:30px;background:rgba(251,77,109,.08);border:1px solid rgba(251,77,109,.5);box-shadow:0 0 50px rgba(251,77,109,.2)}
-.bk-ic{font-size:60px;margin-bottom:12px}
-.bk-box h2{font-size:22px;font-weight:800;color:#fb4d6d;margin-bottom:10px}
-.bk-box p{font-size:13px;line-height:1.6;color:#fda4af}
-.bk-box span{display:inline-block;margin-top:18px;padding:6px 16px;border-radius:99px;border:1px solid rgba(251,77,109,.6);color:#fb4d6d;font-size:11px;font-weight:800;letter-spacing:2px}
 
-/* APP */
+/* ===== APP ===== */
 .app{width:100%;max-width:420px;padding:6px 16px;text-align:center}
 .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px}
 .who{display:flex;align-items:center;gap:10px;text-align:left}
@@ -51,6 +108,7 @@ body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;ba
 .brand img{width:28px;height:28px;border-radius:50%;object-fit:cover}
 .brand b{font-size:14px;font-weight:800;letter-spacing:.5px}
 .brand em{font-style:normal;color:var(--or)}
+
 .hero{margin:4px 0 8px}
 .hero .k{font-size:10.5px;letter-spacing:3px;color:var(--mu);font-weight:700}
 .big{margin:8px 0 10px;font-size:46px;font-weight:800;letter-spacing:-1px;line-height:1}
@@ -59,13 +117,15 @@ body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;ba
 .live-pill{display:inline-flex;align-items:center;gap:8px;font-size:11px;font-weight:600;color:var(--mu);background:var(--s1);border:1px solid var(--bd);border-radius:99px;padding:7px 14px}
 .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--or);box-shadow:0 0 10px var(--or);animation:pulse 1.6s infinite}
 @keyframes pulse{50%{opacity:.3}}
+
 .core{position:relative;width:236px;height:236px;margin:20px auto 6px;display:grid;place-items:center}
 .ring{position:absolute;inset:0;width:100%;height:100%;transform:rotate(-90deg);overflow:visible}
 .ring circle{fill:none;stroke-width:10;stroke-linecap:round}
 .ring .trk{stroke:rgba(255,255,255,.07)}
 .ring .prg{stroke:url(#rg);stroke-dasharray:615.75;stroke-dashoffset:615.75;transition:stroke-dashoffset 1s linear;filter:drop-shadow(0 0 8px rgba(25,245,165,.6))}
-.coin{width:164px;height:164px;border-radius:50%;border:0;display:grid;place-items:center;cursor:pointer;background:radial-gradient(circle at 30% 25%,#1c3a63,#0a1a30 70%);box-shadow:inset 0 2px 0 rgba(255,255,255,.14),0 0 0 8px rgba(39,117,202,.12),0 18px 50px rgba(39,117,202,.35);transition:transform .12s;padding:0;position:relative;touch-action:manipulation}
+.coin{width:164px;height:164px;border-radius:50%;border:0;display:grid;place-items:center;cursor:pointer;background:radial-gradient(circle at 30% 25%,#1c3a63,#0a1a30 70%);box-shadow:inset 0 2px 0 rgba(255,255,255,.14),0 0 0 8px rgba(39,117,202,.12),0 18px 50px rgba(39,117,202,.35);transition:transform .12s}
 .coin:active{transform:scale(.94)}
+.coin{padding:0;position:relative;touch-action:manipulation}
 .coin img{width:100%;height:100%;border-radius:50%;object-fit:cover;pointer-events:none;-webkit-user-drag:none}
 .lock{position:absolute;inset:0;display:none;place-items:center;font-size:34px;color:#fff;z-index:2;border-radius:50%;background:rgba(0,0,0,.35)}
 .core.locked .coin{filter:grayscale(.7) brightness(.6);cursor:not-allowed;box-shadow:none}
@@ -85,13 +145,21 @@ body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;ba
 @keyframes fx{to{transform:translateY(-70px);opacity:0}}
 .core.ready .coin{animation:beat 1.6s ease-in-out infinite;box-shadow:inset 0 2px 0 rgba(255,255,255,.14),0 0 0 8px rgba(25,245,165,.2),0 18px 60px rgba(25,245,165,.45)}
 @keyframes beat{50%{transform:scale(1.04)}}
+.core-txt{margin-bottom:14px}
+.live-amt{font-size:24px;font-weight:800}
+.live-amt small{font-size:12px;color:var(--mu);margin-left:4px}
+.live-sub{font-size:11px;color:var(--mu);margin-top:4px;font-weight:500}
+
 .btn{border:none;border-radius:16px;font-family:inherit;text-transform:uppercase;letter-spacing:.8px;font-size:13px;font-weight:700;padding:15px 14px;width:100%;text-align:center;cursor:pointer;transition:transform .1s,filter .2s;color:#fff}
 .btn:active{transform:scale(.97)}
 .btn-gold,#verify-btn{background:var(--g1);color:#031410;box-shadow:0 8px 26px rgba(25,245,165,.28)}
 .btn-green{background:rgba(25,245,165,.14);color:var(--or);border:1px solid rgba(25,245,165,.4)}
 .btn-dark{background:linear-gradient(135deg,#2775ca,#3b82f6);color:#fff;box-shadow:0 6px 18px rgba(39,117,202,.35)}
 .btn-disabled{background:rgba(255,255,255,.06);color:var(--mu);cursor:not-allowed;box-shadow:none;border:1px solid var(--bd)}
+.btn-collect{width:100%;padding:16px;font-size:14px;background:var(--g1);color:#031410;box-shadow:0 10px 30px rgba(25,245,165,.3)}
+.btn-collect.btn-disabled{background:rgba(255,255,255,.06);color:var(--mu);box-shadow:none}
 #verify-btn{padding:18px;font-size:14px;margin-top:16px}
+
 .bento{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:18px 0 12px}
 .tile{--c:49,208,255;position:relative;overflow:hidden;text-align:center;padding:14px 6px 13px;border-radius:20px;background:linear-gradient(160deg,rgba(var(--c),.18),rgba(var(--c),.04) 65%),var(--s1);border:1px solid rgba(var(--c),.38);box-shadow:0 8px 22px rgba(var(--c),.14),inset 0 1px 0 rgba(255,255,255,.07)}
 .tile::after{content:"";position:absolute;left:18%;right:18%;top:0;height:2px;border-radius:0 0 4px 4px;background:rgb(var(--c));box-shadow:0 0 12px rgb(var(--c))}
@@ -104,6 +172,7 @@ body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;ba
 .tile small{display:block;margin-top:3px;font-size:9px;font-weight:600;color:var(--mu);letter-spacing:.3px}
 .quick{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .quick .btn{padding:14px 6px;font-size:12px}
+
 .title-header{font-size:22px;font-weight:800;margin:6px 0 16px;text-align:left}
 .sub{font-size:12px;color:var(--mu);text-align:left;margin:-8px 0 16px;line-height:1.5}
 .sub b{color:var(--or)}
@@ -118,18 +187,18 @@ body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;ba
 .tm b{display:block;font-size:13px;font-weight:700}
 .tm span{display:block;font-size:11px;color:var(--or);font-weight:700;margin-top:3px}
 .tm small{display:block;font-size:10px;color:var(--mu);margin-top:3px;line-height:1.4}
+
 .lvl{background:linear-gradient(135deg,rgba(25,245,165,.16),rgba(39,117,202,.2));border:1px solid rgba(25,245,165,.25);border-radius:22px;padding:18px;margin-bottom:14px;display:flex;align-items:center;gap:14px;text-align:left}
 .lvl i{width:50px;height:50px;border-radius:16px;background:var(--g1);color:#031410;display:grid;place-items:center;font-size:22px;flex:none}
 .lvl span{font-size:10px;letter-spacing:2px;color:var(--mu);font-weight:700}
 .lvl b{display:block;font-size:24px;font-weight:800;margin-top:2px}
 .trx-input-wrapper{position:relative;display:flex;align-items:center;margin:10px 0 12px}
-.trx-input-wrapper input{width:100%;padding:14px 64px 14px 14px;font-size:12px;font-weight:600;background:var(--ink);border:1px solid var(--bd);border-radius:14px;color:#fff;outline:0;user-select:text}
+.trx-input-wrapper input{width:100%;padding:14px 64px 14px 14px;font-size:12px;font-weight:600;background:var(--ink);border:1px solid var(--bd);border-radius:14px;color:#fff;outline:0}
 .trx-copy-btn{position:absolute;right:6px;background:var(--blue);color:#fff;border:none;padding:9px 14px;border-radius:10px;cursor:pointer}
 .ref-line{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--mu);margin-top:14px}
 .ref-line b{font-size:14px;color:#fff}
-.ref-head,.ref-row,.wd-head,.wd-r{display:grid;gap:6px;align-items:center;font-size:11px;padding:10px 8px;text-align:left}
-.ref-head,.ref-row{grid-template-columns:1.3fr 1fr 1fr 1.4fr}
-.wd-head,.wd-r{grid-template-columns:.9fr .9fr 1.2fr 1.4fr}
+.ref-head,.ref-row{display:grid;grid-template-columns:1.3fr 1fr 1fr 1.4fr;gap:6px;align-items:center;font-size:11px;padding:10px 8px;text-align:left}
+.wd-head,.wd-r{display:grid;grid-template-columns:.9fr .9fr 1.2fr 1.4fr;gap:6px;align-items:center;font-size:11px;padding:10px 8px;text-align:left}
 .ref-head,.wd-head{background:rgba(255,255,255,.05);color:var(--mu);border-radius:10px;font-weight:700}
 .ref-row,.wd-r{border-bottom:1px solid rgba(255,255,255,.05);font-weight:600}
 #ref-list,#withdraw-history-list{background:rgba(0,0,0,.2);border:1px solid var(--bd);border-radius:14px;margin-top:6px;overflow:hidden}
@@ -137,6 +206,7 @@ body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;ba
 .st-pending{background:rgba(255,176,32,.14);color:#ffb020;border-radius:99px;padding:4px 6px;text-align:center;font-weight:800;font-size:9px;white-space:nowrap}
 .st-declined{background:rgba(255,92,122,.14);color:var(--bad);border-radius:99px;padding:4px 6px;text-align:center;font-weight:800;font-size:9px;white-space:nowrap}
 .ref-empty{text-align:center;color:var(--mu);font-size:12px;padding:22px 0}
+
 .wd-hero{text-align:center;padding:24px 16px}
 .wd-ic{width:62px;height:62px;margin:0 auto 14px;border-radius:50%;background:var(--g1);color:#031410;display:grid;place-items:center;font-size:24px;box-shadow:0 10px 30px rgba(25,245,165,.35)}
 .wd-unit{font-size:15px;font-weight:700;color:var(--or)}
@@ -148,14 +218,22 @@ body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;ba
 .wd-input i{margin-left:14px;color:var(--or);font-size:16px}
 .wd-input input{flex:1;min-width:0;background:transparent;border:none;outline:none;color:#fff;font-size:14px;font-weight:600;padding:15px 10px;user-select:text}
 .max-btn{background:var(--g1);color:#031410;border:none;font-weight:800;font-size:11px;cursor:pointer;margin-right:8px;padding:8px 14px;border-radius:10px}
+.wd-row{display:flex;justify-content:space-between;align-items:center}
+.wd-min{font-size:11px;color:var(--mu);font-weight:600}
 .manual-box{margin:8px 0 16px}
 .manual-box input{width:100%;padding:14px;font-size:12px;font-weight:600;background:var(--ink);border:1px solid var(--bd);border-radius:14px;color:#fff;outline:0;user-select:text}
 .wd-notice{margin:0 0 16px;padding:12px;border-radius:14px;background:rgba(255,176,32,.1);border:1px solid rgba(255,176,32,.5);font-size:11px;line-height:1.6;color:#ffd48a;text-align:left}
-.wd-gate{margin:0 0 16px;padding:12px 14px;border-radius:14px;background:rgba(25,245,165,.08);border:1px solid rgba(25,245,165,.35);display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:12px;color:var(--mu);font-weight:600;text-align:left}
-.wd-gate b{font-size:16px;color:var(--or);font-weight:800}
-.wd-gate small{display:block;font-size:10px;color:var(--mu);margin-top:4px;font-weight:500}
+.wd-notice b{color:#ffb020}
+.wd-refbox{margin:0 0 16px;padding:12px 14px;border-radius:14px;background:rgba(25,245,165,.08);border:1px solid rgba(25,245,165,.35);text-align:left}
+.wd-refbox .wr-top{display:flex;justify-content:space-between;align-items:center;font-size:12px;font-weight:700;color:#fff}
+.wd-refbox .wr-top b{color:var(--or)}
+.wd-refbox .wr-bar{height:8px;border-radius:99px;background:rgba(255,255,255,.08);overflow:hidden;margin-top:9px}
+.wd-refbox .wr-bar i{display:block;height:100%;width:0;border-radius:99px;background:var(--g1);transition:width .3s}
+.wd-refbox .wr-sub{font-size:10.5px;color:var(--mu);margin-top:8px;line-height:1.5}
+.wd-refbox.bad{background:rgba(255,92,122,.08);border-color:rgba(255,92,122,.4)}
+.wd-refbox.bad .wr-top b{color:var(--bad)}
 
-/* WITHDRAW CONFIRM */
+/* ===== WITHDRAW CONFIRM MODAL ===== */
 #wd-modal{position:fixed;inset:0;z-index:1000000001;display:none;align-items:center;justify-content:center;padding:20px;background:rgba(2,5,10,.78);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
 #wd-modal.show{display:flex;animation:fade .25s}
 .wdm-box{width:100%;max-width:380px;background:linear-gradient(160deg,#0f1b2e,#0a1220);border:1px solid rgba(25,245,165,.35);border-radius:28px;padding:24px 20px 20px;box-shadow:0 20px 60px rgba(0,0,0,.65),0 0 40px rgba(25,245,165,.12);text-align:center}
@@ -176,6 +254,7 @@ body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;ba
 .tab-content{display:none}
 .tab-content.active{display:block;animation:fade .35s}
 @keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+
 .bottom-nav{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);width:92%;max-width:400px;background:rgba(12,18,29,.9);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);border:1px solid var(--bd);border-radius:26px;box-shadow:0 14px 40px rgba(0,0,0,.6);display:flex;justify-content:space-around;align-items:center;padding:10px;z-index:999999}
 .nav-item{color:var(--mu);display:flex;flex-direction:column;align-items:center;font-size:10px;font-weight:600;gap:5px;flex:1;cursor:pointer;position:relative}
 .nav-item i{font-size:18px}
@@ -183,6 +262,15 @@ body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;ba
 .nav-item.active i{color:var(--or)}
 .nav-item.active::after{content:"";position:absolute;bottom:-6px;width:16px;height:3px;border-radius:3px;background:var(--g1)}
 .nav-mining-btn{width:54px;height:54px;background:var(--g1);border-radius:18px;display:flex;justify-content:center;align-items:center;color:#031410;font-size:22px;margin-top:-30px;box-shadow:0 8px 26px rgba(25,245,165,.5),0 0 0 5px var(--bg)}
+/* ===== LOADER + BLOCKED ===== */
+#ax-loader{position:fixed;inset:0;z-index:999999997;background:#05080f;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:var(--mu);font-size:13px;font-weight:600}
+.ax-spin{width:44px;height:44px;border-radius:50%;border:3px solid rgba(255,255,255,.12);border-top-color:var(--or);animation:ax-spin .8s linear infinite}
+#blocked-screen{display:none;position:fixed;inset:0;z-index:1000000000;align-items:center;justify-content:center;padding:20px;background:linear-gradient(160deg,#0b2140 0%,#05080f 55%,#03050a 100%)}
+.bk-box{width:100%;max-width:380px;text-align:center;padding:34px 22px;border-radius:30px;background:rgba(251,77,109,.08);border:1px solid rgba(251,77,109,.5);box-shadow:0 0 50px rgba(251,77,109,.2)}
+.bk-ic{font-size:60px;margin-bottom:12px}
+.bk-box h2{font-size:22px;font-weight:800;color:#fb4d6d;margin-bottom:10px}
+.bk-box p{font-size:13px;line-height:1.6;color:#fda4af}
+.bk-box span{display:inline-block;margin-top:18px;padding:6px 16px;border-radius:99px;border:1px solid rgba(251,77,109,.6);color:#fb4d6d;font-size:11px;font-weight:800;letter-spacing:2px}
 </style>
 </head>
 <body>
@@ -206,6 +294,63 @@ body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;ba
     </div>
 </div>
 
+<!-- ============ STARTUP ANIMATION ============ -->
+<div id="splash-screen" style="display:none">
+    <canvas id="ax-bg"></canvas>
+    <div class="ax-glow ax-g1"></div><div class="ax-glow ax-g2"></div>
+    <div class="ax-floor"></div>
+
+    <div class="ax-page" id="ax-page">
+        <div class="ax-stage">
+            <div class="ax-float">
+                <div class="ax-ring r1"><i></i></div>
+                <div class="ax-ring r2"><i></i></div>
+                <div class="ax-ring r3"><i></i></div>
+                <div class="ax-core" id="ax-core">
+                    <img id="ax-logo" alt="BabyDoge TapFi" referrerpolicy="no-referrer">
+                    <div class="ax-fbbox">
+                        <svg viewBox="0 0 100 100">
+                            <polygon points="50,12 88,86 12,86" fill="none" stroke="#19f5a5" stroke-width="6" stroke-linejoin="round"/>
+                            <line x1="30" y1="62" x2="70" y2="62" stroke="#19f5a5" stroke-width="6"/>
+                        </svg>
+                    </div>
+                </div>
+                <div class="ax-shadow"></div>
+            </div>
+        </div>
+
+        <div class="ax-title">
+            <h1>BabyDoge TapFi</h1>
+            <h2>SECURITY VERIFICATION</h2>
+            <p>Please wait while we complete the verification process.</p>
+        </div>
+
+        <div class="ax-card">
+            <div class="ax-step" id="ax-s1">
+                <div class="ax-icon"></div>
+                <div class="ax-info"><b>Account Status Check</b><small id="ax-t1">Waiting...</small></div>
+                <span class="ax-chip" id="ax-c1">Pending</span>
+            </div>
+            <div class="ax-step" id="ax-s2">
+                <div class="ax-icon"></div>
+                <div class="ax-info"><b>Multiple Account Detection</b><small id="ax-t2">Waiting...</small></div>
+                <span class="ax-chip" id="ax-c2">Pending</span>
+            </div>
+            <div class="ax-step" id="ax-s3">
+                <div class="ax-icon"></div>
+                <div class="ax-info"><b>Launch Bot</b><small id="ax-t3">Waiting...</small></div>
+                <span class="ax-chip" id="ax-c3">Pending</span>
+            </div>
+            <div class="ax-bar"><i id="ax-fill"></i></div>
+            <div class="ax-meta"><span id="ax-phase">Initializing</span><span id="ax-pct">0%</span></div>
+            <div class="ax-block" id="ax-block"><b>⛔ Multiple account detected</b><br>This phone is already linked to another account. Only one account per device is allowed.</div>
+        </div>
+
+        <div class="ax-tag">SECURE <b>•</b> FAST <b>•</b> RELIABLE</div>
+    </div>
+</div>
+<!-- ============ END STARTUP ANIMATION ============ -->
+
 <div id="ax-loader"><div class="ax-spin"></div><p>Loading BabyDoge TapFi...</p></div>
 
 <div id="blocked-screen">
@@ -222,24 +367,30 @@ body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;ba
     <div class="verify-card">
         <h3 style="font-size:26px;font-weight:900;color:#fff;margin-bottom:8px;">Verification Required</h3>
         <p style="font-size:14px;color:#7fe9ff;margin-bottom:20px;">Join all channels, then tap Check again</p>
+
+        <!-- Verification: Channel 1 -->
         <a href="https://t.me/updatechanneluta" class="channel-item" onclick="return openChannel(event,this)">
             <div class="channel-info"><span class="channel-badge"><i class="fa-solid fa-bullhorn"></i><em>CHANNEL</em></span>
             <div class="channel-details"><h5>Join Channel 1</h5></div></div>
             <i class="fa-solid fa-chevron-right"></i>
         </a>
+        <!-- Verification: YouTube -->
         <a href="https://youtube.com/@cryptotech2.1?si=A6C0ifRC2he49Rpg" class="channel-item" onclick="return openChannel(event,this)">
             <div class="channel-info"><span class="channel-badge"><i class="fa-brands fa-youtube"></i><em>YOUTUBE</em></span>
             <div class="channel-details"><h5>Subscribe YouTube</h5></div></div>
             <i class="fa-solid fa-chevron-right"></i>
         </a>
+        <!-- Verification: Channel 3 -->
         <a href="https://t.me/cryptotech16" class="channel-item" onclick="return openChannel(event,this)">
             <div class="channel-info"><span class="channel-badge"><i class="fa-solid fa-bullhorn"></i><em>CHANNEL</em></span>
             <div class="channel-details"><h5>Join Channel 3</h5></div></div>
             <i class="fa-solid fa-chevron-right"></i>
         </a>
+
         <button class="btn" id="verify-btn" onclick="checkVerification()">I’ve joined — Check again</button>
     </div>
 </div>
+
 
 <div class="app">
   <header class="top">
@@ -254,6 +405,7 @@ body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;ba
       <div class="big"><span id="main-balance">0.0000</span><small>BabyDoge</small></div>
       <div class="live-pill"><i class="dot"></i> Tap to earn BabyDoge</div>
     </div>
+
     <div class="core" id="core">
       <svg class="ring" viewBox="0 0 220 220"><defs><linearGradient id="rg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#19f5a5"/><stop offset="1" stop-color="#31d0ff"/></linearGradient></defs>
         <circle class="trk" cx="110" cy="110" r="98"/><circle class="prg" id="ring-prg" cx="110" cy="110" r="98"/></svg>
@@ -265,10 +417,11 @@ body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;ba
       <div class="tl-sub" id="tl-sub">Tap the coin to fill the line</div>
     </div>
     <div class="daily"><span>Today's earnings</span><b><span id="day-earned">0</span> / 10,000,000 BabyDoge</b></div>
+
     <div class="bento">
       <div class="tile t-daily"><div class="tile-ic"><i class="fa-solid fa-calendar-day"></i></div><span>DAILY</span><b>10M</b><small>BabyDoge</small></div>
       <div class="tile t-refer"><div class="tile-ic"><i class="fa-solid fa-user-plus"></i></div><span>REFER</span><b>20M</b><small>per friend</small></div>
-      <div class="tile t-wd"><div class="tile-ic"><i class="fa-solid fa-arrow-up-from-bracket"></i></div><span>MIN WD</span><b>80M</b><small>BabyDoge</small></div>
+      <div class="tile t-wd"><div class="tile-ic"><i class="fa-solid fa-arrow-up-from-bracket"></i></div><span>MIN WD</span><b id="tile-minwd">80M</b><small>BabyDoge</small></div>
     </div>
     <div class="quick">
       <button class="btn btn-green" onclick="switchTab('tasks')"><i class="fa-solid fa-gift"></i> Free BabyDoge</button>
@@ -280,12 +433,15 @@ body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;ba
     <div class="title-header">Tasks</div>
     <p class="sub">Complete social tasks and earn <b>10M BabyDoge</b> each.</p>
     <div class="card">
+      <!-- Task: Join Telegram -->
       <div class="task"><div class="ti tg"><i class="fa-brands fa-telegram"></i></div>
         <div class="tm"><b>Join Telegram</b><span>+10M BabyDoge</span></div>
         <button class="btn btn-green" id="task-tg2-btn" onclick="handleTask('tg2','https://t.me/paymentchanneluta')">Start</button></div>
+      <!-- Task: YouTube 1 -->
       <div class="task"><div class="ti yt"><i class="fa-brands fa-youtube"></i></div>
         <div class="tm"><b>YouTube 1</b><span>+10M BabyDoge</span><small>Subscribe, submit your task &amp; claim your reward!</small></div>
         <button class="btn btn-green" id="task-yt1-btn" onclick="handleYT('yt1','https://youtube.com/@cryptotech2.1?si=Se0lLUv35lh1wVTn')">Open</button></div>
+      <!-- Task: YouTube 2 -->
       <div class="task"><div class="ti yt"><i class="fa-brands fa-youtube"></i></div>
         <div class="tm"><b>YouTube 2</b><span>+10M BabyDoge</span><small>Subscribe, submit your task &amp; claim your reward!</small></div>
         <button class="btn btn-green" id="task-yt2-btn" onclick="handleYT('yt2','https://youtube.com/@noor-e-eman-j4x?si=c2J3wV8q8aTyg1GF')">Open</button></div>
@@ -295,7 +451,7 @@ body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;ba
   <section id="tab-earn" class="tab-content">
     <div class="title-header">Referrals</div>
     <div class="lvl"><i class="fa-solid fa-users"></i><div><span>PER FRIEND</span><b>20M BabyDoge</b></div></div>
-    <p class="sub" style="margin:-4px 0 16px;">Invite friends and earn <b>20M BabyDoge</b> per user who has successfully joined your referral link and completed verification. Withdrawal unlocks after <b>4 referrals</b>.</p>
+    <p class="sub" style="margin:-4px 0 16px;">Invite friends and earn <b>20M BabyDoge</b> per user who has successfully joined your referral link and completed verification.</p>
     <div class="card">
       <span class="card-label">YOUR REFERRAL LINK</span>
       <div class="trx-input-wrapper"><input type="text" id="ref-link" readonly><button class="trx-copy-btn" onclick="copyRefLink()"><i class="fa-solid fa-copy"></i></button></div>
@@ -317,20 +473,26 @@ body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;ba
       <div class="wd-bal"><span id="withdraw-balance">0.0000</span></div>
       <div class="wd-unit">BabyDoge</div>
     </div>
+
     <div class="card">
       <div class="wd-title">Withdraw BabyDoge</div>
-      <div class="wd-net">Network: BNB Smart Chain (BEP20) · Minimum 80M BabyDoge</div>
-      <div class="wd-gate">
-        <div>Your referrals<small>At least 4 verified referrals required</small></div>
-        <b id="wd-refs">0 / 4</b>
+      <div class="wd-net" id="wd-net-txt">Network: BNB Smart Chain (BEP20) · Minimum 80M BabyDoge</div>
+
+      <div class="wd-refbox" id="wd-refbox">
+        <div class="wr-top"><span>Verified referrals required</span><b id="wr-count">0 / 4</b></div>
+        <div class="wr-bar"><i id="wr-fill"></i></div>
+        <div class="wr-sub" id="wr-sub">Invite at least 4 verified friends to unlock withdrawals.</div>
       </div>
+
       <div class="wd-notice">Enter your Baby Doge BEP20 wallet address (Trust Wallet or any supported exchange wallet).</div>
+
       <div class="wd-input"><i class="fa-solid fa-coins"></i><input type="number" id="withdraw-amount" placeholder="Amount (min 80,000,000)" min="80000000" step="1" inputmode="decimal"><button type="button" class="max-btn" onclick="setMaxWithdraw()">MAX</button></div>
       <div class="manual-box">
         <input type="text" id="manual-addr" placeholder="Your BEP20 wallet address (0x...)" autocomplete="off" autocapitalize="off" spellcheck="false">
       </div>
-      <button class="btn btn-gold" id="wd-btn" onclick="requestWithdraw()"></button>
+      <button class="btn btn-gold" id="wd-btn" onclick="requestWithdraw()"><i class="fa-solid fa-arrow-up-right-from-square"></i> Create Withdrawal Request</button>
     </div>
+
     <div class="card">
       <span class="card-label" style="margin-bottom:12px;">WITHDRAWAL HISTORY</span>
       <div class="wd-head"><span>Date</span><span>Wallet</span><span>Amount</span><span>Status</span></div>
@@ -346,30 +508,42 @@ body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;ba
     <a class="nav-item" id="nav-withdraw" onclick="switchTab('withdraw')"><i class="fa-solid fa-wallet"></i><span>Wallet</span></a>
   </nav>
 </div>
-
 <script>
 const tg = window.Telegram && window.Telegram.WebApp;
 if (tg) { try { tg.ready(); tg.expand(); } catch (e) {} }
 
-const API_BASE = 'https://usdc-one-2.onrender.com';
+const API_BASE = 'https://usdc-one-2.onrender.com';   // Render server
 const BOT_USERNAME = 'BabydogeTapfiTg_Bot';
-const MIN_WITHDRAW = 80000000;     // 80M BabyDoge
-const MIN_REFERRALS = 4;           // verified referrals required to withdraw
+const COOLDOWN = 24 * 3600 * 1000;
+const DAILY_REWARD = 10000000;   // BabyDoge per day
+const MIN_WITHDRAW = 80000000;  // 80M BabyDoge (server /api/me se bhi aata hai: S.rules)
+const MIN_REFS = 4;             // withdraw ke liye kam az kam 4 verified referrals (server bhi check karta hai)
 const initData = (tg && tg.initData) || '';
+// ===== SECURITY CONFIG =====
+// ALLOW_PREVIEW = true karne se demo mode (bina Telegram) chalta hai. LIVE bot ke liye hamesha false rakho.
+const ALLOW_PREVIEW = false;
 const nonce = () => (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random().toString(16).slice(2));
 const tgUser = tg && tg.initDataUnsafe && tg.initDataUnsafe.user;
 
+// ===== User ID =====
+const TEST_USER_ID = 777777;
+const FORCE_TEST_ID = false;
+const userId = (FORCE_TEST_ID || !(tgUser && tgUser.id)) ? TEST_USER_ID : tgUser.id;
+
+const AX_LOGO = 'https://i.ibb.co/GQhj6BcW/file-00000000f5788211a63c0b8d93d20ebf.png';
+
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const fmt = n => Math.floor(Number(n) || 0).toLocaleString('en-US');
-const $id = id => document.getElementById(id);
+
 const TASK_BTN = { tg2: 'task-tg2-btn', yt1: 'task-yt1-btn', yt2: 'task-yt2-btn' };
 
-const TAP_TARGET = 30;
-const ROUNDS_PER_DAY = 10;
-const ROUND_REWARD = 1000000;
-const TAP_REWARD = ROUND_REWARD / TAP_TARGET;
-const ROUND_COOLDOWN = 0;
-const MAX_TPS = 14;
+// ===== TAP CONSTANTS (server ke constants se match) =====
+const TAP_TARGET = 30;                       // ek line = 30 taps
+const ROUNDS_PER_DAY = 10;                   // din me 10 lines
+const ROUND_REWARD = 1000000;                // ek line = 1M BabyDoge (10 x 1M = 10M / day)
+const TAP_REWARD = ROUND_REWARD / TAP_TARGET; // ~0.001667 BabyDoge per tap
+const ROUND_COOLDOWN = 0;                    // line poori hone ke baad koi wait nahi
+const MAX_TPS = 14;                          // insani limit: max taps / second
 const FLUSH_EVERY = 10;
 
 let S = null;
@@ -380,12 +554,71 @@ let busy = false;
 let BLOCKED = false;
 let DEVICE = { id: '', fp: '', fp2: '', conflict: false };
 
-const userId = (tgUser && tgUser.id) ? tgUser.id : 0;
-$id('user-display-name').innerText = (tgUser && tgUser.first_name) || 'Free User';
-$id('user-id-text').innerText = 'ID: ' + userId;
-$id('ref-link').value = 'https://t.me/' + BOT_USERNAME + '?start=' + userId;
+document.getElementById('user-display-name').innerText = (tgUser && tgUser.first_name) || 'Free User';
+document.getElementById('user-id-text').innerText = 'ID: ' + userId + (ALLOW_PREVIEW && !initData ? ' • PREVIEW' : '');
+document.getElementById('ref-link').value = 'https://t.me/' + BOT_USERNAME + '?start=' + userId;
+
+// Withdraw rules: server se aaye to wahi, warna default
+const minWd = () => (S && S.rules && Number(S.rules.minWithdraw)) || MIN_WITHDRAW;
+const minRefs = () => (S && S.rules && Number(S.rules.minRefs)) || MIN_REFS;
+const refCount = () => ((S && S.referrals) || []).filter(r => r && r.id).length;
+const short = n => { n = Number(n) || 0; return n >= 1e6 ? (n / 1e6) + 'M' : fmt(n); };
+
+
+// ===== PREVIEW MODE =====
+const PREVIEW = ALLOW_PREVIEW && !initData;
+const MOCK = { balance: 0,
+    lineTaps: 0, isVerified: false, tapDone: 0, nextTime: 0, tasks: {}, proof: null,
+    referrals: [
+        { id: 123456789, date: Date.now() - 86400000 * 2, bonus: 20000000 },
+        { id: 987654321, date: Date.now() - 86400000, bonus: 20000000 }
+    ],
+    withdrawals: [] };
+function mockData() {
+    return { balance: Math.round(MOCK.balance * 10000) / 10000, isVerified: MOCK.isVerified, serverTime: Date.now(),
+        rules: { minWithdraw: MIN_WITHDRAW, minRefs: MIN_REFS },
+        tap: { done: MOCK.tapDone, max: ROUNDS_PER_DAY, target: TAP_TARGET, perTap: TAP_REWARD, lineTaps: MOCK.lineTaps, cooldown: 15000, nextTime: MOCK.nextTime },
+        tasks: MOCK.tasks, proof: MOCK.proof, referrals: MOCK.referrals, withdrawals: MOCK.withdrawals };
+}
+async function mockApi(path, body) {
+    await sleep(300);
+    const ok = () => ({ ok: true, data: mockData() });
+    const bad = e => ({ ok: false, error: e, data: mockData() });
+    body = body || {};
+    switch (path) {
+        case '/api/me': return ok();
+        case '/api/verify': MOCK.isVerified = true; return ok();
+        case '/api/tap': {
+            if (MOCK.tapDone >= ROUNDS_PER_DAY) return bad('Daily limit reached');
+            if (Date.now() < MOCK.nextTime) return bad('Wait for the next line');
+            const n = Math.min(Math.max(0, Math.floor(body.taps || 0)), TAP_TARGET - MOCK.lineTaps);
+            MOCK.lineTaps += n; MOCK.balance += n * TAP_REWARD;
+            if (MOCK.lineTaps >= TAP_TARGET) { MOCK.lineTaps = 0; MOCK.tapDone++; MOCK.nextTime = Date.now() + 15000; }
+            return ok();
+        }
+        case '/api/task':
+            if (MOCK.tasks[body.taskId]) return bad('Task already claimed');
+            MOCK.tasks[body.taskId] = true; MOCK.balance += 10000000; return ok();
+        case '/api/yt/submit':
+            if (MOCK.tasks[body.taskId]) return bad('Task already claimed');
+            MOCK.proof = { task: body.taskId }; return ok();
+        case '/api/yt/claim':
+            if (!MOCK.proof || MOCK.proof.task !== body.taskId) return bad('Submit the task first');
+            MOCK.tasks[body.taskId] = true; MOCK.proof = null; MOCK.balance += 10000000; return ok();
+        case '/api/withdraw':
+            if (!body.amount || body.amount < MIN_WITHDRAW) return bad('Minimum withdrawal is 80M BabyDoge');
+            if (MOCK.referrals.length < MIN_REFS) return bad('You need at least ' + MIN_REFS + ' verified referrals to withdraw. You have ' + MOCK.referrals.length + '.');
+            if (body.amount > MOCK.balance) return bad('Insufficient balance');
+            if (!/^0x[a-fA-F0-9]{40}$/.test(body.address || '')) return bad('Invalid wallet');
+            MOCK.balance -= body.amount;
+            MOCK.withdrawals.unshift({ date: Date.now(), address: body.address, amount: body.amount, status: 'PENDING' });
+            return ok();
+    }
+    return bad('Unknown API ' + path);
+}
 
 async function api(path, body, retries = 0) {
+    if (PREVIEW) return mockApi(path, body);
     if (BLOCKED) return { ok: false, error: 'Access blocked: multiple accounts on this device.' };
     if (!initData) return { ok: false, error: 'Please open this app from the bot using the "Open BabyDoge TapFi" button.' };
     for (let attempt = 0; attempt <= retries; attempt++) {
@@ -402,16 +635,16 @@ async function api(path, body, retries = 0) {
             let data;
             try { data = JSON.parse(text); }
             catch (e) {
-                if (attempt < retries) { await sleep(3000); continue; }
+                if (attempt < retries) { await sleep(1500); continue; }
                 return { ok: false, error: (r.status === 404 || r.status >= 500)
                     ? 'Server is starting, please try again in a minute'
                     : 'Server is busy (' + r.status + '), please try again shortly' };
             }
-            if ((r.status === 500 || r.status === 503) && attempt < retries) { await sleep(2500); continue; }
+            if ((r.status === 500 || r.status === 503) && attempt < retries) { await sleep(1500); continue; }
             if (!r.ok && !data.error) data.error = 'Server error (' + r.status + ')';
             return data;
         } catch (e) {
-            if (attempt < retries) { await sleep(3000); continue; }
+            if (attempt < retries) { await sleep(1500); continue; }
             return { ok: false, error: e.name === 'AbortError'
                 ? 'Server is waking up, please try again in 30 seconds'
                 : 'Network error, please try again' };
@@ -430,23 +663,42 @@ function setState(d) {
 function renderAll() {
     if (!S) return;
     showBalance();
-    $id('withdraw-balance').innerText = fmt(S.balance);
+    document.getElementById('withdraw-balance').innerText = fmt(S.balance);
     updateTaskButtons();
     renderReferrals();
     renderHistory();
-    renderWithdrawBtn();
-    renderTap();
+    renderWdRules();
+    checkMiningTimer();
+}
+
+// Min withdraw + verified referral requirement (server rules ke mutabiq)
+function renderWdRules() {
+    const mw = minWd(), mr = minRefs(), rc = refCount();
+    const tile = document.getElementById('tile-minwd'); if (tile) tile.innerText = short(mw);
+    const net = document.getElementById('wd-net-txt'); if (net) net.innerText = 'Network: BNB Smart Chain (BEP20) · Minimum ' + short(mw) + ' BabyDoge';
+    const inp = document.getElementById('withdraw-amount');
+    if (inp) { inp.placeholder = 'Amount (min ' + fmt(mw) + ')'; inp.min = String(mw); }
+    const box = document.getElementById('wd-refbox');
+    if (box) {
+        const okRefs = rc >= mr;
+        box.classList.toggle('bad', !okRefs);
+        document.getElementById('wr-count').innerText = Math.min(rc, mr) + ' / ' + mr;
+        document.getElementById('wr-fill').style.width = (100 * Math.min(1, rc / mr)).toFixed(0) + '%';
+        document.getElementById('wr-sub').innerText = okRefs
+            ? 'Great! You have ' + rc + ' verified referrals. Withdrawals are unlocked.'
+            : 'Invite at least ' + mr + ' verified friends to unlock withdrawals. You need ' + (mr - rc) + ' more.';
+    }
 }
 
 function showToast(m) {
-    const t = $id('toast-notification');
-    $id('toast-msg').innerText = m;
+    const t = document.getElementById('toast-notification');
+    document.getElementById('toast-msg').innerText = m;
     t.classList.add('show');
     clearTimeout(showToast._t);
     showToast._t = setTimeout(() => t.classList.remove('show'), 3000);
 }
-function showVerify() { $id('verification-screen').style.display = 'flex'; }
-function hideVerify() { $id('verification-screen').style.display = 'none'; }
+function showVerify() { document.getElementById('verification-screen').style.display = 'flex'; }
+function hideVerify() { document.getElementById('verification-screen').style.display = 'none'; }
 
 function openLink(url) {
     try {
@@ -467,13 +719,17 @@ function openChannel(e, el) {
 async function checkVerification() {
     if (verifying) return;
     verifying = true;
-    const btn = $id('verify-btn');
+    const btn = document.getElementById('verify-btn');
     btn.innerText = 'Checking...';
     btn.disabled = true;
+
+    // retry 2 baar, taake Render cold start par "Server error" na aaye
     const r = await api('/api/verify', null, 2);
+
     verifying = false;
     btn.innerText = 'I’ve joined — Check again';
     btn.disabled = false;
+
     if (!r.ok) {
         showToast(r.missing && r.missing.length ? 'Must join all channels and tap Check again.' : (r.error || 'Verification failed'));
         return;
@@ -481,10 +737,13 @@ async function checkVerification() {
     setState(r.data);
     hideVerify();
     switchTab('home');
+    axMarkSeen();
     showToast(r.joinBonus ? 'Verified! Joining bonus +5M BabyDoge added' : 'Verification successful!');
 }
 
-/* ===== DEVICE CHECK (1 phone = 1 account) ===== */
+/* =====================================================
+   DEVICE CHECK  (1 phone = 1 account)
+   ===================================================== */
 const DEVICE_LOCK = true;
 
 function axHash(str) {
@@ -560,6 +819,7 @@ async function axDevice() {
     try { id = localStorage.getItem('ax_did'); owner = localStorage.getItem('ax_owner'); } catch (e) {}
     try { if (!id) id = await axIdbGet('did'); if (!owner) owner = await axIdbGet('owner'); } catch (e) {}
     if (!id) id = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random().toString(16).slice(2));
+
     const me = tgUser && tgUser.id ? String(tgUser.id) : null;
     let conflict = false;
     if (DEVICE_LOCK && me) {
@@ -571,18 +831,146 @@ async function axDevice() {
     return { id: id, fp: axFingerprint(), fp2: axFingerprint2(), conflict: conflict };
 }
 
-const devPromise = axDevice().then(d => { DEVICE = d; return d; }).catch(() => DEVICE);
+const devPromise = axDevice()
+    .then(d => { DEVICE = d; return d; })
+    .catch(() => DEVICE);
+
+// Promise ko max ms tak intezar; time khatam to fallback value (loading kabhi atakti nahi)
 const withTimeout = (p, ms, fb) => Promise.race([p, new Promise(r => setTimeout(() => r(fb), ms))]);
+
+/* =====================================================
+   STARTUP ANIMATION  (fast: ~2 seconds, auto continue)
+   ===================================================== */
+function axRunIntro(apiPromise) {
+    const $ = id => document.getElementById(id);
+    const sp = $('splash-screen');
+    const page = $('ax-page');
+    const core = $('ax-core');
+    const img = $('ax-logo');
+
+    img.onerror = () => core.classList.add('ax-fallback');
+    img.src = AX_LOGO;
+
+    function setProgress(p, phase) {
+        $('ax-fill').style.width = p + '%';
+        $('ax-pct').textContent = Math.round(p) + '%';
+        if (phase) $('ax-phase').textContent = phase;
+    }
+    function begin(n, text) {
+        const s = $('ax-s' + n); s.classList.remove('done', 'fail'); s.classList.add('active');
+        $('ax-t' + n).textContent = text; $('ax-c' + n).textContent = 'Running';
+    }
+    function finish(n, text) {
+        const s = $('ax-s' + n); s.classList.remove('active'); s.classList.add('done');
+        $('ax-t' + n).textContent = text; $('ax-c' + n).textContent = 'Passed';
+    }
+    function fail(n, text) {
+        const s = $('ax-s' + n); s.classList.remove('active'); s.classList.add('fail');
+        $('ax-t' + n).textContent = text; $('ax-c' + n).textContent = 'Failed';
+    }
+
+    function tilt(x, y) {
+        page.style.setProperty('--rx', (-((y / innerHeight) - .5) * 2 * 14).toFixed(1) + 'deg');
+        page.style.setProperty('--ry', (((x / innerWidth) - .5) * 2 * 18).toFixed(1) + 'deg');
+    }
+    sp.addEventListener('pointermove', e => tilt(e.clientX, e.clientY));
+    sp.addEventListener('pointerdown', e => tilt(e.clientX, e.clientY));
+    sp.addEventListener('pointerup', () => { page.style.setProperty('--rx', '0deg'); page.style.setProperty('--ry', '0deg'); });
+    function onOrient(ev) {
+        if (!document.getElementById('splash-screen')) { removeEventListener('deviceorientation', onOrient); return; }
+        if (ev.gamma == null) return;
+        page.style.setProperty('--rx', Math.max(-14, Math.min(14, (ev.beta - 50) * .3)).toFixed(1) + 'deg');
+        page.style.setProperty('--ry', Math.max(-18, Math.min(18, ev.gamma * .5)).toFixed(1) + 'deg');
+    }
+    addEventListener('deviceorientation', onOrient);
+
+    const cv = $('ax-bg'), cx = cv.getContext('2d');
+    let W, H, P = [];
+    function size() {
+        W = cv.width = innerWidth; H = cv.height = innerHeight;
+        P = Array.from({ length: 60 }, () => ({ x: Math.random() * W, y: Math.random() * H, vx: (Math.random() - .5) * .4, vy: (Math.random() - .5) * .4 }));
+    }
+    addEventListener('resize', size); size();
+    (function tick() {
+        if (!document.getElementById('splash-screen')) return;
+        cx.clearRect(0, 0, W, H);
+        const done = sp.classList.contains('ax-done');
+        for (const p of P) {
+            p.x += p.vx; p.y += p.vy;
+            if (p.x < 0 || p.x > W) p.vx *= -1;
+            if (p.y < 0 || p.y > H) p.vy *= -1;
+            cx.fillStyle = done ? 'rgba(34,197,94,.7)' : 'rgba(25,245,165,.75)';
+            cx.beginPath(); cx.arc(p.x, p.y, 1.5, 0, 6.283); cx.fill();
+        }
+        for (let i = 0; i < P.length; i++) for (let j = i + 1; j < P.length; j++) {
+            const d = Math.hypot(P[i].x - P[j].x, P[i].y - P[j].y);
+            if (d < 110) {
+                cx.strokeStyle = (done ? 'rgba(34,197,94,' : 'rgba(25,245,165,') + (.22 * (1 - d / 110)) + ')';
+                cx.beginPath(); cx.moveTo(P[i].x, P[i].y); cx.lineTo(P[j].x, P[j].y); cx.stroke();
+            }
+        }
+        requestAnimationFrame(tick);
+    })();
+
+    // Total ~1.8 second, phir apne aap aage (CONTINUE button ki zaroorat nahi)
+    return (async () => {
+        await sleep(150);
+
+        begin(1, 'Checking account status...');
+        setProgress(15, 'Account status');
+        const res = await Promise.all([sleep(450), apiPromise]);
+        const srv = res[1] || {};
+        finish(1, srv.ok ? 'Account verified • Status: Active' : 'Account check complete');
+        setProgress(40);
+
+        begin(2, 'Scanning this device...');
+        setProgress(48, 'Device check');
+        await sleep(450);
+        const dev = await withTimeout(devPromise, 1500, DEVICE);
+        if (dev.conflict || srv.code === 'MULTI_ACCOUNT') {
+            BLOCKED = true;
+            fail(2, 'Multiple account detected');
+            sp.classList.add('ax-blocked');
+            setProgress(48, 'Access denied');
+            $('ax-block').style.display = 'block';
+            return { ok: false, blocked: true };
+        }
+        finish(2, 'No duplicate account found');
+        setProgress(72);
+
+        begin(3, 'Launching BabyDoge TapFi...');
+        setProgress(85, 'Launching');
+        await sleep(400);
+        finish(3, 'Bot is online');
+        setProgress(100, 'Verification complete ✓');
+        sp.classList.add('ax-done');
+        await sleep(250);
+        return await apiPromise;
+    })();
+}
+
+const $id = id => document.getElementById(id);
+
+async function axSeen() {
+    let v = null;
+    try { v = localStorage.getItem('ax_seen_' + userId); } catch (e) {}
+    try { if (!v) v = await axIdbGet('seen_' + userId); } catch (e) {}
+    return !!v;
+}
+async function axMarkSeen() {
+    try { localStorage.setItem('ax_seen_' + userId, '1'); } catch (e) {}
+    try { await axIdbSet('seen_' + userId, '1'); } catch (e) {}
+}
 
 function showBlocked() {
     BLOCKED = true;
-    ['ax-loader', 'verification-screen'].forEach(id => { const e = $id(id); if (e) e.style.display = 'none'; });
+    ['ax-loader', 'splash-screen', 'verification-screen'].forEach(id => { const e = $id(id); if (e) e.style.display = 'none'; });
     $id('blocked-screen').style.display = 'flex';
 }
 
 function showLock(title, msg, tag) {
     BLOCKED = true;
-    ['ax-loader', 'verification-screen'].forEach(id => { const e = $id(id); if (e) e.style.display = 'none'; });
+    ['ax-loader', 'splash-screen', 'verification-screen'].forEach(id => { const e = $id(id); if (e) e.style.display = 'none'; });
     const b = $id('blocked-screen');
     b.querySelector('h2').innerText = title;
     b.querySelector('p').innerText = msg;
@@ -590,6 +978,7 @@ function showLock(title, msg, tag) {
     b.style.display = 'flex';
 }
 
+// Telegram ke bahar / purani session / fake launch ko roko (server bhi initData ka HMAC check karega)
 function secureGate() {
     const ID = 'Please open this app from the bot using the "Open BabyDoge TapFi" button.';
     if (!tg || !initData || !tgUser || !tgUser.id) return ['Open from Telegram', ID, 'TELEGRAM ONLY'];
@@ -599,54 +988,70 @@ function secureGate() {
     return null;
 }
 
+// Server problem par: sirf message + Try again button (verification screen nahi)
 function showRetry(msg) {
     const l = $id('ax-loader');
+    if (!l) { showToast(msg); return; }
     l.style.display = 'flex';
     l.innerHTML = '<p style="text-align:center;padding:0 24px;color:#fda4af">' + String(msg).replace(/[<>&]/g, '') +
         '</p><button class="btn btn-gold" style="width:auto;padding:14px 34px" onclick="location.reload()">Try again</button>';
 }
 
-/* ===== STARTUP: ~2 second loader, then app opens directly ===== */
 async function startApp() {
-    const g = secureGate();
-    if (g) { showLock(g[0], g[1], g[2]); return; }
+    if (!PREVIEW) { const g = secureGate(); if (g) { showLock(g[0], g[1], g[2]); return; } }
 
-    const t0 = Date.now();
-    const [dev, r] = await Promise.all([
-        withTimeout(devPromise, 3000, DEVICE),
-        api('/api/me', null, 5)
+    // FAST: device check aur "seen" check ek saath (parallel), chhote timeouts
+    const [dev, seen] = await Promise.all([
+        withTimeout(devPromise, 1500, DEVICE),
+        withTimeout(axSeen(), 800, false)
     ]);
     if (!DEVICE.id) DEVICE.id = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random().toString(16).slice(2));
+    if (dev.conflict) { showBlocked(); return; }
 
-    const wait = 2000 - (Date.now() - t0);
-    if (wait > 0) await sleep(wait);
+    const r = await api('/api/me', null, 5);
 
-    if (dev.conflict || r.code === 'MULTI_ACCOUNT') { showBlocked(); return; }
+    if (r.code === 'MULTI_ACCOUNT') { showBlocked(); return; }
     if (r.banned) { showLock('Account banned', 'Your account is banned.', 'BANNED'); return; }
-    if (!r.ok) { showRetry(r.error || 'Server error'); return; }
 
-    $id('ax-loader').style.display = 'none';
+    const splash = $id('splash-screen');
+    // Server error par verification screen NAHI dikhani, sirf Try again
+    if (!r.ok) { showRetry(r.error || 'Server error'); return; }
+    const loader = $id('ax-loader');
+    if (loader) loader.style.display = 'none';
+
+    if (!seen && !r.data.isVerified) {
+        splash.style.display = 'block';
+        const x = await axRunIntro(Promise.resolve(r));
+        if (x.blocked) { showBlocked(); return; }
+        splash.style.opacity = '0';
+        setTimeout(() => splash.remove(), 300);
+    } else if (splash) {
+        splash.remove();
+    }
+
     setState(r.data);
     if (r.data.isVerified) {
         hideVerify();
         switchTab('home');
+        axMarkSeen();
     } else {
         showVerify();
     }
 }
 
 function copyRefLink() {
-    const i = $id('ref-link');
+    const i = document.getElementById('ref-link');
     i.select();
     try { navigator.clipboard.writeText(i.value); } catch (e) {}
     showToast('Referral link copied!');
 }
 
 function shareRefLink() {
-    openLink('https://t.me/share/url?url=' + encodeURIComponent($id('ref-link').value) +
+    openLink('https://t.me/share/url?url=' + encodeURIComponent(document.getElementById('ref-link').value) +
         '&text=' + encodeURIComponent('Get free BabyDoge every day! 💵'));
 }
 
+// Safe date: galat ya khali date par '-' dikhao ("Invalid Date" kabhi nahi)
 function fmtDate(d) {
     if (!d) return '-';
     const x = new Date(d);
@@ -654,11 +1059,13 @@ function fmtDate(d) {
 }
 
 function renderReferrals() {
+    // Sirf wo entries jinki valid user ID ho
     const list = ((S && S.referrals) || []).filter(r => r && r.id);
     const total = list.reduce((t, r) => t + (Number(r.bonus) || 0), 0);
-    $id('ref-total').innerText = list.length + (list.length === 1 ? ' Friend' : ' Friends');
-    $id('ref-bonus').innerText = fmt(total) + ' BabyDoge';
-    const box = $id('ref-list');
+    document.getElementById('ref-total').innerText = list.length + (list.length === 1 ? ' Friend' : ' Friends');
+    document.getElementById('ref-bonus').innerText = fmt(total) + ' BabyDoge';
+
+    const box = document.getElementById('ref-list');
     if (!list.length) {
         box.innerHTML = '<div class="ref-empty">No referrals yet. Share your link to start earning!</div>';
         return;
@@ -670,7 +1077,7 @@ function renderReferrals() {
     ).join('');
 }
 
-/* ===== TAP SYSTEM ===== */
+// ===== TAP SYSTEM (har tap par BabyDoge) =====
 let pending = 0, inflight = 0, tapBusy = false, flushT = null;
 let tapTimes = [], strikes = 0, tapLockUntil = 0;
 
@@ -686,11 +1093,12 @@ const fmtLeft = ms => { const t = Math.max(0, Math.ceil(ms / 1000)); return Stri
 function showBalance() {
     if (!S) return;
     const b = S.balance + (inflight + pending) * tapInfo().per;
-    $id('main-balance').innerText = fmt(b);
+    document.getElementById('main-balance').innerText = fmt(b);
+    const ub = document.getElementById('usd-bal'); if (ub) ub.innerText = b.toFixed(2);
 }
 
 function tapFx(e, amt) {
-    const core = $id('core');
+    const core = document.getElementById('core');
     const r = core.getBoundingClientRect();
     const x = (e && e.clientX != null ? e.clientX : r.left + r.width / 2) - r.left;
     const y = (e && e.clientY != null ? e.clientY : r.top + r.height / 2) - r.top;
@@ -765,15 +1173,15 @@ document.addEventListener('visibilitychange', () => { if (document.hidden) flush
 function renderTap() {
     if (!S) return;
     const t = tapInfo();
-    const core = $id('core'), line = $id('tapline');
-    const title = $id('tl-title'), cnt = $id('tl-count');
-    const fill = $id('tl-fill'), sub = $id('tl-sub');
+    const core = document.getElementById('core'), line = document.getElementById('tapline');
+    const title = document.getElementById('tl-title'), cnt = document.getElementById('tl-count');
+    const fill = document.getElementById('tl-fill'), sub = document.getElementById('tl-sub');
     const left = t.next - srvNow();
     const lt = (t.done >= t.max || left > 0) ? 0 : lineTotal(t);
 
     const earned = (t.done * t.target + lt) * t.per;
-    $id('day-earned').innerText = fmt(earned);
-    const ring = $id('ring-prg');
+    document.getElementById('day-earned').innerText = fmt(earned);
+    const ring = document.getElementById('ring-prg');
     if (ring) ring.style.strokeDashoffset = (615.75 * (1 - Math.min(1, (t.done * t.target + lt) / (t.max * t.target)))).toFixed(2);
 
     line.classList.remove('cool', 'full');
@@ -793,10 +1201,12 @@ function renderTap() {
         sub.innerText = 'Every tap earns +' + fmt(t.per) + ' BabyDoge • line ' + (t.done + 1) + ' of ' + t.max;
     }
 }
+function checkMiningTimer() { renderTap(); }
+function claimFreeMining() { switchTab('home'); }
+document.getElementById('tap-coin').addEventListener('pointerdown', onCoinTap);
 setInterval(renderTap, 1000);
-$id('tap-coin').addEventListener('pointerdown', onCoinTap);
 
-/* ===== DETERRENTS ===== */
+// ===== EXTRA SECURITY (deterrents; asli security server par hai) =====
 const inField = e => e.target && /^(INPUT|TEXTAREA)$/.test(e.target.tagName);
 document.addEventListener('contextmenu', e => { if (!inField(e)) e.preventDefault(); });
 document.addEventListener('dragstart', e => e.preventDefault());
@@ -808,23 +1218,25 @@ try { if (tg && tg.disableVerticalSwipes) tg.disableVerticalSwipes(); } catch (e
 
 function updateTaskButtons() {
     Object.keys(TASK_BTN).forEach(id => {
-        const b = $id(TASK_BTN[id]);
-        const pendingTask = S && S.proof ? S.proof.task : null;
+        const b = document.getElementById(TASK_BTN[id]);
+        const pending = S && S.proof ? S.proof.task : null;
         let text, cls;
+
         if (S && S.tasks && S.tasks[id]) {
             text = 'Claimed'; cls = 'btn btn-disabled';
         } else if (id === 'tg2') {
             text = taskState[id] === 'CHECK' ? 'Check' : 'Start';
             cls = taskState[id] === 'CHECK' ? 'btn btn-dark' : 'btn btn-green';
-        } else if (pendingTask === id) {
+        } else if (pending === id) {
             text = 'Claim'; cls = 'btn btn-gold';
-        } else if (pendingTask) {
+        } else if (pending) {
             text = 'Locked'; cls = 'btn btn-disabled';
         } else if (taskState[id] === 'OPEN') {
             text = 'Submit'; cls = 'btn btn-dark';
         } else {
             text = 'Open'; cls = 'btn btn-green';
         }
+
         b.innerText = text;
         b.className = cls;
         b.style.width = 'auto';
@@ -837,6 +1249,7 @@ async function handleTask(id, link) {
     if (!S || !S.isVerified) { showVerify(); return; }
     if (S.tasks[id]) return;
     if (busy) return;
+
     if (taskState[id] !== 'CHECK') {
         openLink(link);
         taskState[id] = 'CHECK';
@@ -855,12 +1268,15 @@ async function handleYT(id, link) {
     if (!S || !S.isVerified) { showVerify(); return; }
     if (S.tasks[id]) return;
     if (busy) return;
-    const pendingTask = S.proof ? S.proof.task : null;
-    if (pendingTask && pendingTask !== id) {
+
+    const pending = S.proof ? S.proof.task : null;
+
+    if (pending && pending !== id) {
         showToast('Please claim your pending reward first.');
         return;
     }
-    if (pendingTask === id) {
+
+    if (pending === id) {
         busy = true;
         const r = await api('/api/yt/claim', { taskId: id });
         busy = false;
@@ -874,12 +1290,14 @@ async function handleYT(id, link) {
         showToast('+10M BabyDoge claimed!');
         return;
     }
+
     if (taskState[id] !== 'OPEN') {
         openLink(link);
         taskState[id] = 'OPEN';
         updateTaskButtons();
         return;
     }
+
     busy = true;
     const r = await api('/api/yt/submit', { taskId: id });
     busy = false;
@@ -894,7 +1312,7 @@ async function handleYT(id, link) {
 }
 
 function renderHistory() {
-    const box = $id('withdraw-history-list');
+    const box = document.getElementById('withdraw-history-list');
     const h = (S && S.withdrawals) || [];
     if (!h.length) {
         box.innerHTML = '<div class="ref-empty">No withdrawal requests yet.</div>';
@@ -904,59 +1322,58 @@ function renderHistory() {
         const st = String(i.status).toUpperCase();
         const cls = st === 'PAID' ? 'st-paid' : st === 'DECLINED' ? 'st-declined' : 'st-pending';
         const label = st === 'PAID' ? '✓ Completed' : st === 'DECLINED' ? '✕ DECLINED' : 'PENDING';
-        return '<div class="wd-r"><span>' + fmtDate(i.date) + '</span><span>' +
+        return '<div class="wd-row-item wd-r"><span>' + fmtDate(i.date) + '</span><span>' +
             String(i.address).slice(0, 6).replace(/[^0-9a-zA-Z]/g, '') + '...</span><span>-' + fmt(i.amount) +
             '</span><span class="' + cls + '">' + label + '</span></div>';
     }).join('');
 }
 
-/* ===== WITHDRAW ===== */
+/* =====================================================
+   WITHDRAW ADDRESS (sirf manual BEP-20 address, wallet connect nahi)
+   ===================================================== */
 const isAddr = a => /^0x[a-fA-F0-9]{40}$/.test(a || '');
 
+// Address likha ho to wo, khali ho to '', galat ho to 'INVALID'
 function getAddr() {
     const m = ($id('manual-addr').value || '').trim();
     if (!m) return '';
     return isAddr(m) ? m : 'INVALID';
 }
 
-function renderWithdrawBtn() {
-    const btn = $id('wd-btn');
-    const refs = (S && S.refCount) || 0;
-    const ok = refs >= MIN_REFERRALS;
-    $id('wd-refs').innerText = refs + ' / ' + MIN_REFERRALS;
+function renderWallet() {
     const a = getAddr();
-    let text;
-    if (!ok) text = 'Need ' + MIN_REFERRALS + ' referrals to withdraw';
-    else if (a && a !== 'INVALID') text = 'Create Withdrawal Request';
-    else text = 'Enter wallet address';
-    btn.className = ok ? 'btn btn-gold' : 'btn btn-disabled';
-    btn.innerHTML = '<i class="fa-solid fa-arrow-up-right-from-square"></i> ' + text;
+    $id('wd-btn').innerText = (a && a !== 'INVALID') ? 'WITHDRAW' : 'ENTER WALLET ADDRESS';
 }
-$id('manual-addr').addEventListener('input', renderWithdrawBtn);
-renderWithdrawBtn();
+$id('manual-addr').addEventListener('input', renderWallet);
+renderWallet();
 
 function setMaxWithdraw() {
-    if (S) $id('withdraw-amount').value = String(Math.floor(S.balance));
+    if (S) document.getElementById('withdraw-amount').value = String(Math.floor(S.balance));
 }
 
+// Friends / Wallet tab khulte hi fresh data (referrals, balance) server se aata hai
 function switchTab(t) {
     document.querySelectorAll('.tab-content').forEach(e => e.classList.remove('active'));
     document.querySelectorAll('.nav-item').forEach(e => e.classList.remove('active'));
-    $id('tab-' + t).classList.add('active');
-    $id('nav-' + t).classList.add('active');
+    document.getElementById('tab-' + t).classList.add('active');
+    document.getElementById('nav-' + t).classList.add('active');
     if (t === 'earn' || t === 'withdraw') refreshMe();
 }
 
+// Server se latest data lao (tap/busy ho to skip, taake koi tap na kho jaye)
 async function refreshMe() {
     if (!S || !S.isVerified || document.hidden || pending > 0 || inflight > 0 || tapBusy || busy) return;
     const r = await api('/api/me');
     if (r.ok) setState(r.data);
 }
+// Friends tab khula ho to har 15 sec me auto refresh
 setInterval(() => {
-    if ($id('tab-earn').classList.contains('active')) refreshMe();
+    if (document.getElementById('tab-earn').classList.contains('active')) refreshMe();
 }, 15000);
+// App wapas khulte hi refresh
 document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshMe(); });
 
+// Confirm popup. true = Confirm, false = Re-enter
 function wdConfirm(addr, amt) {
     return new Promise(res => {
         const m = $id('wd-modal'), ok = $id('wdm-ok'), re = $id('wdm-re');
@@ -976,18 +1393,23 @@ function wdConfirm(addr, amt) {
 
 async function requestWithdraw() {
     if (!S || !S.isVerified) { showVerify(); return; }
-    const refs = S.refCount || 0;
-    if (refs < MIN_REFERRALS) { showToast('You need at least ' + MIN_REFERRALS + ' referrals to withdraw. You have ' + refs + '.'); return; }
+
+    // 4 verified referrals ke bina withdraw nahi (0 referral par bilkul nahi)
+    const mr = minRefs(), rc = refCount();
+    if (rc < mr) { showToast('You need at least ' + mr + ' verified referrals to withdraw. You have ' + rc + '.'); return; }
+
     const addr = getAddr();
     if (addr === 'INVALID') { showToast('Invalid address. It must start with 0x and be 42 characters.'); return; }
     if (!addr) { showToast('Paste your wallet address.'); return; }
-    const amt = parseFloat($id('withdraw-amount').value);
+    const amt = parseFloat(document.getElementById('withdraw-amount').value);
     if (!amt) { showToast('Enter withdraw amount!'); return; }
-    if (amt < MIN_WITHDRAW) { showToast('Minimum withdrawal is 80,000,000 BabyDoge!'); return; }
+    if (amt < minWd()) { showToast('Minimum withdrawal is ' + fmt(minWd()) + ' BabyDoge!'); return; }
     if (amt > S.balance) { showToast('Insufficient balance!'); return; }
     if (busy) return;
-    const ok = await wdConfirm(addr, amt);
-    if (!ok) { $id('manual-addr').focus(); return; }
+    if (!PREVIEW) {
+        const ok = await wdConfirm(addr, amt);
+        if (!ok) { const mi = $id('manual-addr'); if (mi) mi.focus(); return; }
+    }
 
     busy = true;
     const r = await api('/api/withdraw', { amount: amt, address: addr });
@@ -995,10 +1417,11 @@ async function requestWithdraw() {
     if (!r.ok) { showToast(r.error || 'Error'); return; }
     setState(r.data);
     showToast('Withdrawal request submitted!');
-    $id('withdraw-amount').value = '';
+    document.getElementById('withdraw-amount').value = '';
 }
 
+// App start (sab functions aur constants ke baad)
 startApp();
 </script>
 </body>
-    </html>
+</html>
