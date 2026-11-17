@@ -109,7 +109,6 @@ const BOT_USERNAME = 'BabydogeTapfiTg_Bot';
 const YT_CLAIM_DELAY = 10 * 1000;
 
 // ---------- CHANNELS ----------
-// Welcome message ke buttons aur app verification dono yehi 2 channels use karte hain.
 const CHANNEL_UPDATES = { id: '@updatechanneluta', name: 'Official Updates Channel', url: 'https://t.me/updatechanneluta' };
 const CHANNEL_PAYOUTS = { id: '@cryptotech16', name: 'Official Payouts Channel', url: 'https://t.me/cryptotech16' };
 
@@ -117,11 +116,10 @@ const CHANNEL_PAYOUTS = { id: '@cryptotech16', name: 'Official Payouts Channel',
 const VERIFY_CHANNELS = [CHANNEL_UPDATES, CHANNEL_PAYOUTS];
 
 // Telegram task (auto verify)
-// Task channel verification se alag hai. Bot ko @paymentchanneluta me admin banana zaroori hai (membership check ke liye).
+// Bot ko @paymentchanneluta me admin banana zaroori hai (membership check ke liye).
 const TASK_CHANNEL = { id: '@paymentchanneluta', name: 'Telegram Task Channel' };
 
 // Payment proof channel: har paid withdraw yahan auto post hota hai.
-// Bot ko is channel me ADMIN banao (Post Messages permission ke saath). Channel badalna ho to sirf neeche wali line badlo.
 const PAYMENT_CHANNEL = '@cryptotech16';
 
 // YouTube tasks (Open -> Submit -> Claim)
@@ -179,6 +177,16 @@ UserSchema.index({ wallet: 1 }, { unique: true, partialFilterExpression: { walle
 // Team list / purane referrals dhoondne ke liye
 UserSchema.index({ referredBy: 1 });
 const User = mongoose.model('User', UserSchema);
+
+// ONE-TIME FIX: purane users jinki referrals / withdrawals field array nahi hai ("Cannot apply $pull to a non-array value" error)
+// Ye har start par chalta hai, safe hai (sirf kharab documents ko [] banata hai).
+mongoose.connection.on('open', async () => {
+    try {
+        const a = await User.collection.updateMany({ referrals: { $not: { $type: 'array' } } }, { $set: { referrals: [] } });
+        const b = await User.collection.updateMany({ withdrawals: { $not: { $type: 'array' } } }, { $set: { withdrawals: [] } });
+        console.log('🛠 Array fields fixed -> referrals:', a.modifiedCount, '| withdrawals:', b.modifiedCount);
+    } catch (e) { console.log('Array fix error:', e.message); }
+});
 
 // userId unique: ek user ki ek waqt mein sirf ek pending withdrawal
 const PendingRequest = mongoose.model('PendingRequest', new mongoose.Schema({
@@ -389,11 +397,20 @@ async function auth(req, res, next) {
         // User level rate limit
         if (!rl('u:' + id, 150, 60000)) return res.status(429).json({ ok: false, error: 'Too many requests. Please slow down.' });
 
-        const user = await User.findOneAndUpdate(
-            { id },
-            { $set: { username: displayName(u) } },
-            { upsert: true, new: true, setDefaultsOnInsert: true }
-        );
+        // FIX: upsert race (E11000) par dobara try, 500 error nahi
+        let user;
+        try {
+            user = await User.findOneAndUpdate(
+                { id },
+                { $set: { username: displayName(u) } },
+                { upsert: true, new: true, setDefaultsOnInsert: true }
+            );
+        } catch (e) {
+            if (e && e.code === 11000) {
+                user = await User.findOneAndUpdate({ id }, { $set: { username: displayName(u) } }, { new: true });
+            } else throw e;
+        }
+        if (!user) return res.status(500).json({ ok: false, error: 'Server error' });
         if (user.isBanned) return res.status(403).json({ ok: false, banned: true, error: 'Your account is banned.' });
 
         if (DEVICE_LOCK) {
@@ -467,7 +484,7 @@ function publicUser(u, pending) {
         },
         proof: pending ? { task: pending.task, status: 'ready' } : null,
         referrals: cleanReferrals(u.referrals),
-        withdrawals: u.withdrawals.slice(0, 50)
+        withdrawals: (Array.isArray(u.withdrawals) ? u.withdrawals : []).slice(0, 50)
     };
 }
 
@@ -490,51 +507,65 @@ async function userView(u) {
     return view;
 }
 
-// ---------- REFERRAL CREDIT ----------
-// Naya user verify hote hi (channels join) referrer ko bonus + notification milta hai.
-// /start par kuch nahi milta, sirf verification success par. Sirf ek baar credit hota hai (atomic).
+// ---------- REFERRAL CREDIT (FIXED) ----------
+// Naya user verify hote hi referrer ko bonus + notification milta hai.
+// Sirf ek baar credit hota hai (refCredited flag se atomic claim). Fail par flag wapas false.
 async function creditReferral(userId) {
     const u = await User.findOne({ id: String(userId) });
-    if (!u || !u.isVerified || !u.referredBy) return false;
+    if (!u || !u.isVerified || !u.referredBy || u.referredBy === u.id) return false;
+    const refId = u.referredBy;
 
-    // Purani kharab entries (bina id) referrer ki list se hata do
-    await User.updateOne({ id: u.referredBy }, { $pull: { referrals: { id: { $exists: false } } } });
-
-    // Atomic + idempotent: bonus sirf tab milta hai jab is user ki entry referrer ki list me pehle se na ho.
-    const ref = await User.findOneAndUpdate(
-        { id: u.referredBy, 'referrals.id': { $ne: u.id } },
-        {
-            $inc: { balance: REF_BONUS },
-            $push: { referrals: { id: u.id, date: new Date().toISOString(), bonus: fromMicro(REF_BONUS), status: 'COMPLETED' } }
-        },
-        { new: true }
+    // Referrer ki referrals field array na ho to [] bana do (purana data)
+    await User.collection.updateOne(
+        { id: refId, referrals: { $not: { $type: 'array' } } },
+        { $set: { referrals: [] } }
     );
 
-    if (!ref) {
-        // Referrer nahi mila ya pehle se credited. Flag sirf tab set karo jab sach me credited ho.
-        const already = await User.exists({ id: u.referredBy, 'referrals.id': u.id });
-        if (already && u.refCredited !== true) await User.updateOne({ id: u.id }, { $set: { refCredited: true } });
+    const refDoc = await User.findOne({ id: refId }, { referrals: 1 }).lean();
+    if (!refDoc) return false;
+    const inList = (Array.isArray(refDoc.referrals) ? refDoc.referrals : [])
+        .some(r => r && String(r.id) === u.id);
+    if (inList) {
+        if (!u.refCredited) await User.updateOne({ id: u.id }, { $set: { refCredited: true } });
         return false;
     }
-    await User.updateOne({ id: u.id }, { $set: { refCredited: true } });
 
-    console.log(`✅ Referral credited: ${u.id} -> ${ref.id}`);
+    // atomic claim: sirf ek request credit kar sakti hai
+    const claim = await User.findOneAndUpdate(
+        { id: u.id, refCredited: { $ne: true } },
+        { $set: { refCredited: true } }
+    );
+    if (!claim) return false;
 
-    sendMsg(ref.id,
-        `🎉 <b>New Referral Joined!</b>\n\n` +
-        `👥 A new user has successfully joined through your referral link.\n\n` +
-        `💰 <b>${fmtD(REF_BONUS)} ${COIN.toUpperCase()}</b> has been added to your balance!\n\n` +
-        `🚀 Keep inviting friends and earn more Baby Doge!`
-    ).then(r => { if (!r.ok) console.log('Referral notify failed:', r.description || ''); });
+    try {
+        const ref = await User.findOneAndUpdate({ id: refId }, {
+            $inc: { balance: REF_BONUS },
+            $push: { referrals: { id: u.id, date: new Date().toISOString(), bonus: fromMicro(REF_BONUS), status: 'COMPLETED' } }
+        }, { new: true });
+        if (!ref) throw new Error('referrer not found');
 
-    if (cleanReferrals(ref.referrals).length >= REF_MILESTONE_COUNT) {
-        const ms = await User.findOneAndUpdate(
-            { id: ref.id, refMilestone: { $ne: true } },
-            { $set: { refMilestone: true }, $inc: { balance: REF_MILESTONE_BONUS } }
-        );
-        if (ms) sendMsg(ref.id, `🏆 <b>${REF_MILESTONE_COUNT} referrals completed!</b>\n+${fmtD(REF_MILESTONE_BONUS)} ${COIN} bonus added (total ${fmtD(REF_MILESTONE_COUNT * REF_BONUS + REF_MILESTONE_BONUS)} ${COIN}).`);
+        console.log(`✅ Referral credited: ${u.id} -> ${ref.id}`);
+
+        sendMsg(ref.id,
+            `🎉 <b>New Referral Joined!</b>\n\n` +
+            `👥 A new user has successfully joined through your referral link.\n\n` +
+            `💰 <b>${fmtD(REF_BONUS)} ${COIN.toUpperCase()}</b> has been added to your balance!\n\n` +
+            `🚀 Keep inviting friends and earn more Baby Doge!`
+        ).then(r => { if (!r.ok) console.log('Referral notify failed:', r.description || ''); });
+
+        if (cleanReferrals(ref.referrals).length >= REF_MILESTONE_COUNT) {
+            const ms = await User.findOneAndUpdate(
+                { id: ref.id, refMilestone: { $ne: true } },
+                { $set: { refMilestone: true }, $inc: { balance: REF_MILESTONE_BONUS } }
+            );
+            if (ms) sendMsg(ref.id, `🏆 <b>${REF_MILESTONE_COUNT} referrals completed!</b>\n+${fmtD(REF_MILESTONE_BONUS)} ${COIN} bonus added (total ${fmtD(REF_MILESTONE_COUNT * REF_BONUS + REF_MILESTONE_BONUS)} ${COIN}).`);
+        }
+        return true;
+    } catch (e) {
+        // rollback: agli baar dobara try ho sake
+        await User.updateOne({ id: u.id }, { $set: { refCredited: false } });
+        throw e;
     }
-    return true;
 }
 
 // Referrer ke purane verified friends jinka bonus reh gaya ho, unhe ek baar credit karo (idempotent)
@@ -560,7 +591,7 @@ app.use(express.urlencoded({ extended: false, limit: '10kb' }));
 app.use((req, res, next) => { res.setHeader('X-Content-Type-Options', 'nosniff'); next(); });
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('/health', (req, res) => res.send(dbReady() ? 'OK' : 'OK (database connecting)'));
-app.get('/api/ping', (req, res) => res.json({ ok: true, db: dbReady(), version: 'babydoge-tapfi-v3-referral' }));
+app.get('/api/ping', (req, res) => res.json({ ok: true, db: dbReady(), version: 'babydoge-tapfi-v4-fixed' }));
 
 // ---------- USER API ----------
 
@@ -608,19 +639,18 @@ app.post('/api/verify', auth, wrap(async (req, res) => {
     );
     const gotJoin = !!jb;
 
-    // Referrer ko bonus + notification (verification success par)
-    await creditReferral(u.id);
+    // FIX: referral fail ho to bhi verify success hona chahiye
+    try { await creditReferral(u.id); }
+    catch (e) { console.log('creditReferral error (ignored):', e.message); }
 
     const fresh = await User.findOne({ id: u.id });
-    res.json({ ok: true, joinBonus: gotJoin, data: await userView(fresh) });
+    let data;
+    try { data = await userView(fresh); }
+    catch (e) { console.log('userView error in verify:', e.message); data = publicUser(fresh, null); }
+    res.json({ ok: true, joinBonus: gotJoin, data });
 }));
 
 // ---------- TAP (har tap par BabyDoge) ----------
-// Frontend taps batch me bhejta hai: { taps: n }. Server:
-//  - din ki limit (ROUNDS_PER_DAY) aur insani raftaar (MAX_TPS) enforce karta hai
-//  - line poori hote hi counter 0 ho jata hai, seedha nayi line (COOLDOWN = 0)
-//  - sirf wahi taps credit karta hai jo allowed hon, baqi chhod deta hai
-//  - balance atomic update hota hai, ek user ke requests lock se serial chalte hain
 app.post('/api/tap', auth, wrap(async (req, res) => {
     const id = req.user.id;
     const taps = Math.floor(Number(req.body.taps));
@@ -755,10 +785,6 @@ app.post('/api/proof/start', auth, wrap(ytSubmit));
 app.post('/api/proof/claim', auth, wrap(ytClaim));
 
 // ---------- WITHDRAW (BabyDoge BEP-20: manual wallet address) ----------
-// Pehle withdraw par wallet account se lock ho jata hai. Baad me sirf usi wallet par withdraw hoga.
-// Ek wallet sirf ek account par chal sakta hai.
-// Auto payout ON ho aur amount <= MAX_AUTO_PAYOUT ho to BabyDoge seedha on-chain bhej diya jata hai,
-// warna admin ko Approve / Reject ka message jata hai.
 const adminButtons = reqId => ({ inline_keyboard: [[{ text: '✅ Approve', callback_data: `approve_${reqId}` }, { text: '❌ Reject', callback_data: `reject_${reqId}` }]] });
 
 app.post('/api/withdraw', auth, wrap(async (req, res) => {
@@ -949,13 +975,19 @@ app.post('/api/webhook', async (req, res) => {
                 }
 
                 const name = displayName(msg.from);
-                const user = await User.findOneAndUpdate(
-                    { id: chatId },
-                    { $set: { username: name } },
-                    { upsert: true, new: true, setDefaultsOnInsert: true }
-                );
+                let user;
+                try {
+                    user = await User.findOneAndUpdate(
+                        { id: chatId },
+                        { $set: { username: name } },
+                        { upsert: true, new: true, setDefaultsOnInsert: true }
+                    );
+                } catch (e) {
+                    if (e && e.code === 11000) user = await User.findOneAndUpdate({ id: chatId }, { $set: { username: name } }, { new: true });
+                    else throw e;
+                }
                 // Referrer sirf link hota hai (bonus nahi). Bonus verification success par milta hai.
-                if (referrer && !user.referredBy && !user.isVerified) {
+                if (referrer && user && !user.referredBy && !user.isVerified) {
                     await User.updateOne({ id: chatId, referredBy: null }, { $set: { referredBy: referrer } });
                     console.log(`Referral linked: ${chatId} <- ${referrer}`);
                 }
@@ -1192,9 +1224,12 @@ app.post('/admin/creditref', checkAdmin, wrap(async (req, res) => {
 // Sab verified referred users ke missed referrals ek saath theek karo (jo pehle se credited hain unhe dobara nahi milega)
 app.post('/admin/repairrefs', checkAdmin, wrap(async (req, res) => {
     const users = await User.find({ isVerified: true, referredBy: { $ne: null } }, { id: 1 });
-    let n = 0;
-    for (const x of users) { if (await creditReferral(x.id)) n++; }
-    res.json({ ok: true, message: `Repaired ${n} missed referral(s) out of ${users.length} referred users.` });
+    let n = 0, failed = 0;
+    for (const x of users) {
+        try { if (await creditReferral(x.id)) n++; }
+        catch (e) { failed++; console.log('Repair error for', x.id, e.message); }
+    }
+    res.json({ ok: true, message: `Repaired ${n} missed referral(s) out of ${users.length} referred users.` + (failed ? ` Failed: ${failed}` : '') });
 }));
 
 app.post('/admin/msg', checkAdmin, wrap(async (req, res) => {
