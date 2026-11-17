@@ -1,1938 +1,1096 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const crypto = require('crypto');
+const path = require('path');
+
+// ethers sirf auto-payout ke liye chahiye. Install: npm i ethers
+let ethers = null;
+try { ethers = require('ethers'); } catch (e) { console.log('ℹ️ ethers not installed - auto payout disabled (run: npm i ethers)'); }
+
 const app = express();
+app.disable('x-powered-by');
 app.set('trust proxy', 1);
 
-// async route errors must never leave a page hanging (Express 4 does not catch them by itself)
-['get', 'post'].forEach(function (m) {
-    const orig = app[m].bind(app);
-    app[m] = function (path) {
-        const handlers = Array.prototype.slice.call(arguments, 1);
-        if (!handlers.length) return orig(path);          // app.get('setting')
-        return orig.apply(null, [path].concat(handlers.map(function (h) {
-            if (typeof h !== 'function' || h.constructor.name !== 'AsyncFunction') return h;
-            return function (req, res, next) {
-                return h(req, res, next).catch(function (err) {
-                    console.log('Route error', req.method, req.path, err);
-                    if (res.headersSent) return;
-                    if (req.path.indexOf('/api/') === 0 || req.method !== 'GET') {
-                        res.status(500).json({ success: false, message: 'Server error. Please try again.' });
-                    } else {
-                        res.status(500).send('Server error. Please refresh in a few seconds.');
-                    }
-                });
-            };
-        })));
-    };
-});
-
-// ================== SETTINGS ==================
 const BOT_TOKEN = process.env.BOT_TOKEN;
-const ADMIN_ID = String(process.env.ADMIN_ID || "7482625921").trim();
+const ADMIN_ID = String(process.env.ADMIN_ID || '6959332288');
 const MONGO_URI = process.env.MONGO_URI || process.env.MONGODB_URI;
-
-const ADMIN_USERNAME = process.env.ADMIN_USERNAME || "admin";
+const ADMIN_USERNAME = process.env.ADMIN_USERNAME;
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
-const VERCEL_APP_URL = process.env.VERCEL_APP_URL || "https://lite-core-0r7t.vercel.app/";
+const PUBLIC_URL = (process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || '').replace(/\/$/, '');
 
-const MIN_WITHDRAW_TRX = 1;
-
-if (!BOT_TOKEN) console.error('❌ BOT_TOKEN environment variable missing!');
-if (!ADMIN_PASSWORD) console.error('❌ ADMIN_PASSWORD environment variable missing! Admin login disabled.');
-if (!MONGO_URI) console.error('❌ MONGO_URI environment variable missing!');
-
-// ================== HELPERS ==================
-function esc(s) {
-    return String(s === undefined || s === null ? '' : s)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-}
-function validId(id) { return /^\d{1,20}$/.test(String(id || '')); }
-
-// ================== SIMPLE USER ID (no Telegram signature check) ==================
-// userId comes from the app (body / url). Website security is handled only in the frontend (Access Denied screen).
-function requireTg(req, res, next) {
-    const uid = String((req.body && req.body.userId) || (req.params && req.params.userId) || (req.query && req.query.userId) || '');
-    if (!validId(uid)) return res.status(400).json({ success: false, message: 'Invalid user id' });
-    req.tgId = uid;
-    const nm = req.body && req.body.username;
-    req.tgName = nm && String(nm).length < 80 ? String(nm) : 'User';
-    next();
+if (!BOT_TOKEN || !MONGO_URI || !ADMIN_USERNAME || !ADMIN_PASSWORD || !ADMIN_ID) {
+    console.error('❌ Missing env: BOT_TOKEN, MONGO_URI, ADMIN_USERNAME, ADMIN_PASSWORD, ADMIN_ID required.');
+    process.exit(1);
 }
 
-// ================== MINING RULES ==================
-// VALUE is in USD (1 GHS = $1 plan, earns $0.30 per day), but everything the user SEES and COLLECTS is TRX.
-// Mining speed in TRX = USD speed / live TRX price. Mined TRX is locked in TRX at the moment it is settled,
-// so later price moves never change what was already mined.
-const PLAN_DURATION_MS = 10 * 24 * 60 * 60 * 1000;
-const PAID_RATE_PER_GHS_USD = 0.30;    // $0.30 per GHS per day
-const FREE_DAILY_USD = 0.01;           // free mining: $0.01 per day
+const WEBHOOK_SECRET = crypto.createHash('sha256').update('wh' + BOT_TOKEN).digest('hex').slice(0, 32);
 
-// ================== MULTI-COIN LIVE PRICES ==================
-const STABLE = new Set(['USDT', 'USDC', 'BUSD', 'DAI', 'TUSD', 'FDUSD']);
-const COIN_ALIASES = {
-    TRON: 'TRX', LITECOIN: 'LTC', BITCOIN: 'BTC', ETHEREUM: 'ETH', DOGECOIN: 'DOGE',
-    SOLANA: 'SOL', RIPPLE: 'XRP', TETHER: 'USDT', BINANCE: 'BNB', TONCOIN: 'TON', GRAM: 'TON',
-    CARDANO: 'ADA', POLKADOT: 'DOT', AVALANCHE: 'AVAX', CHAINLINK: 'LINK', STELLAR: 'XLM'
-};
-const NETWORK_TOKENS = new Set(['BEP', 'TRC', 'ERC', 'BSC', 'POLYGON']);
-const COINGECKO_IDS = {
-    TRX: 'tron', LTC: 'litecoin', BTC: 'bitcoin', ETH: 'ethereum', BNB: 'binancecoin',
-    DOGE: 'dogecoin', SOL: 'solana', XRP: 'ripple', TON: 'the-open-network',
-    MATIC: 'matic-network', ADA: 'cardano', DOT: 'polkadot', BCH: 'bitcoin-cash',
-    AVAX: 'avalanche-2', LINK: 'chainlink', SHIB: 'shiba-inu', XLM: 'stellar',
-    ATOM: 'cosmos', NEAR: 'near', APT: 'aptos', PEPE: 'pepe'
-};
+// ---------- MONEY (USDC) ----------
+// Balance database me INTEGER micro-USDC me rakha jata hai (1 USDC = 1,000,000) taake float ki galti na ho.
+const U = 1e6;
+const toMicro = x => Math.round(Number(x) * U);
+const fromMicro = m => Math.round(Number(m) || 0) / U;
+const fmtU = m => String(Number((Number(m) / U).toFixed(6)));
 
-// "TRX (TRC-20)" -> TRX, "LTC (Litecoin)" -> LTC, "USDT (BEP-20)" / "BEP-20" -> USDT
-function parseCoinSymbol(coin) {
-    const s = String(coin || '').toUpperCase().trim();
-    const tokens = s.match(/[A-Z0-9]+/g) || [];
-    const isKnown = t => STABLE.has(t) || !!COINGECKO_IDS[t];
-    // checks every word: "Solana (SOL)" -> SOL, "LTC (Litecoin)" -> LTC, "USDT (BEP-20)" -> USDT
-    for (const t of tokens) {
-        if (NETWORK_TOKENS.has(t)) continue;
-        const a = COIN_ALIASES[t] || t;
-        if (isKnown(a)) return a;
+const TASK_REWARD = 300000;          // 0.3 USDC per task
+const REF_BONUS = 300000;            // 0.3 USDC per referral
+const MIN_WITHDRAW = 2 * U;          // 2 USDC
+
+// ---------- AUTO PAYOUT (USDC BEP-20 / BSC) ----------
+// Render env me set karo:
+//   PAYOUT_PRIVATE_KEY = payout wallet ki private key (sirf env me, kabhi code me nahi). Is wallet me USDC + thora BNB (gas) rakho.
+//   BSC_RPC            = (optional) default https://bsc-dataseed.binance.org/
+//   AUTO_PAYOUT        = 'false' likho to auto band (admin approve karega). Default: key ho to ON.
+//   MAX_AUTO_PAYOUT    = (optional) is amount (USDC) se bade withdraw admin approval par jayenge. Default 20.
+// Key na ho to purana manual approve system chalta hai.
+const PAYOUT_PRIVATE_KEY = (process.env.PAYOUT_PRIVATE_KEY || '').trim();
+const BSC_RPC = process.env.BSC_RPC || 'https://bsc-dataseed.binance.org/';
+const USDC_BSC = '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d';   // Binance-Peg USDC (BEP-20), 18 decimals
+const USDC_DECIMALS = 18;
+const AUTO_PAYOUT = process.env.AUTO_PAYOUT !== 'false';
+const MAX_AUTO_PAYOUT = toMicro(process.env.MAX_AUTO_PAYOUT || 20);
+const MIN_GAS_BNB = '0.0005';
+
+let payoutWallet = null, usdcContract = null, payoutProvider = null;
+if (ethers && PAYOUT_PRIVATE_KEY) {
+    try {
+        payoutProvider = new ethers.JsonRpcProvider(BSC_RPC, 56, { staticNetwork: ethers.Network.from(56) });
+        payoutWallet = new ethers.Wallet(PAYOUT_PRIVATE_KEY, payoutProvider);
+        usdcContract = new ethers.Contract(USDC_BSC, [
+            'function transfer(address to, uint256 amount) returns (bool)',
+            'function balanceOf(address) view returns (uint256)'
+        ], payoutWallet);
+        console.log('✅ Payout wallet ready:', payoutWallet.address);
+    } catch (e) {
+        console.error('❌ Invalid PAYOUT_PRIVATE_KEY:', e.message);
+        payoutWallet = null; usdcContract = null;
     }
-    if (tokens.length && NETWORK_TOKENS.has(tokens[0])) return 'USDT';
-    const first = tokens[0] || 'TRX';
-    return COIN_ALIASES[first] || first;
 }
+const payoutReady = () => !!(payoutWallet && usdcContract);
 
-function coinDecimals(sym) {
-    if (STABLE.has(sym)) return 2;
-    if (sym === 'BTC' || sym === 'ETH' || sym === 'BCH' || sym === 'BNB') return 8;
-    return 6;
-}
-function roundCoin(n, sym) { return Number(Number(n).toFixed(coinDecimals(sym))); }
-function fmtCoin(n, sym) {
-    let s = Number(n).toFixed(coinDecimals(sym));
-    if (s.includes('.')) {
-        s = s.replace(/0+$/, '');
-        const parts = s.split('.');
-        s = parts[0] + '.' + (parts[1] || '').padEnd(2, '0');
+// USDC on-chain bhejo. Success par { hash }, fail par error throw (paise nahi gaye).
+async function sendUsdc(address, microAmount) {
+    if (!payoutReady()) throw new Error('Payout wallet not configured');
+    if (!/^0x[a-fA-F0-9]{40}$/.test(address)) throw new Error('Invalid address');
+    const units = ethers.parseUnits(fmtU(microAmount), USDC_DECIMALS);
+
+    const bal = await usdcContract.balanceOf(payoutWallet.address);
+    if (bal < units) throw new Error('Payout wallet has not enough USDC');
+    const gas = await payoutProvider.getBalance(payoutWallet.address);
+    if (gas < ethers.parseEther(MIN_GAS_BNB)) throw new Error('Payout wallet needs BNB for gas');
+
+    const tx = await usdcContract.transfer(address, units);
+    try {
+        const rc = await tx.wait(1, 90000);
+        if (rc && rc.status === 0) throw new Error('REVERTED');
+    } catch (e) {
+        if (String(e.message) === 'REVERTED') throw new Error('Transaction reverted on-chain');
+        // timeout: tx bhej di gayi hai, confirm hone me der. Paid maan lo.
     }
-    return s;
+    return { hash: tx.hash };
 }
 
-const priceCache = {};
-const priceInflight = {};
-const PRICE_FRESH_MS = 20 * 1000;          // reuse a price for 20 seconds
-const PRICE_STALE_MS = 15 * 60 * 1000;     // if every source is down, last good price is OK for 15 minutes
+// ---------- TAP SYSTEM ----------
+// Ek line = TAP_TARGET taps. Line poori hone par seedha nayi line (koi wait nahi). Din me ROUNDS_PER_DAY lines.
+// 10 lines x 0.05 = 0.5 USDC / din.  (Frontend ke constants se match hona zaroori hai)
+const TAP_TARGET = 30;
+const ROUNDS_PER_DAY = 10;
+const ROUND_REWARD = 50000;          // 0.05 USDC per line
+const COOLDOWN = 0;                  // line ke baad koi wait nahi (timer band)
+const MAX_TPS = 14;                  // insani limit: taps / second (server isse zyada credit nahi karta)
+const BOT_USERNAME = 'FreeTapXBot';
 
-async function getJson(url) {
-    const r = await fetch(url, {
-        signal: AbortSignal.timeout(4500),
-        headers: { 'accept': 'application/json', 'user-agent': 'Mozilla/5.0 (compatible; TronRichBot/1.0)' }
-    });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    return await r.json();
-}
+// YouTube: Submit ke kitni der baad Claim allowed hoga. 0 = delay nahi.
+const YT_CLAIM_DELAY = 10 * 1000;
 
-// Many independent sources: some exchanges block certain hosting regions (e.g. Binance on US servers),
-// so we ask all of them at once and use the median of whatever answers.
-const PRICE_SOURCES = [
-    { name: 'binance',        get: async s => parseFloat((await getJson(`https://api.binance.com/api/v3/ticker/price?symbol=${s}USDT`)).price) },
-    { name: 'binance-vision', get: async s => parseFloat((await getJson(`https://data-api.binance.vision/api/v3/ticker/price?symbol=${s}USDT`)).price) },
-    { name: 'coinbase',       get: async s => parseFloat((await getJson(`https://api.coinbase.com/v2/prices/${s}-USD/spot`)).data.amount) },
-    { name: 'kraken',         get: async s => {
-        const pair = (s === 'BTC' ? 'XBT' : s) + 'USD';
-        const d = await getJson(`https://api.kraken.com/0/public/Ticker?pair=${pair}`);
-        const k = Object.keys(d.result || {})[0];
-        return parseFloat(d.result[k].c[0]);
-    } },
-    { name: 'okx',            get: async s => parseFloat((await getJson(`https://www.okx.com/api/v5/market/ticker?instId=${s}-USDT`)).data[0].last) },
-    { name: 'bybit',          get: async s => parseFloat((await getJson(`https://api.bybit.com/v5/market/tickers?category=spot&symbol=${s}USDT`)).result.list[0].lastPrice) },
-    { name: 'kucoin',         get: async s => parseFloat((await getJson(`https://api.kucoin.com/api/v1/market/orderbook/level1?symbol=${s}-USDT`)).data.price) },
-    { name: 'cryptocompare',  get: async s => Number((await getJson(`https://min-api.cryptocompare.com/data/price?fsym=${s}&tsyms=USD`)).USD) },
-    { name: 'coingecko',      get: async s => {
-        const id = COINGECKO_IDS[s];
-        if (!id) throw new Error('no coingecko id');
-        const d = await getJson(`https://api.coingecko.com/api/v3/simple/price?ids=${id}&vs_currencies=usd`);
-        return Number(d[id].usd);
-    } }
-];
+// ---------- CHANNELS ----------
+// Welcome message ke buttons aur app verification dono yehi 2 channels use karte hain.
+const CHANNEL_UPDATES = { id: '@updatechanneluta', name: 'Official Updates Channel', url: 'https://t.me/updatechanneluta' };
+const CHANNEL_PAYOUTS = { id: '@cryptotech16', name: 'Official Payouts Channel', url: 'https://t.me/cryptotech16' };
 
-function medianOf(arr) {
-    const s = [...arr].sort((x, y) => x - y);
-    const m = Math.floor(s.length / 2);
-    return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
-}
+// Verification ke liye channels (app khulne par dono join hone zaroori)
+const VERIFY_CHANNELS = [CHANNEL_UPDATES, CHANNEL_PAYOUTS];
 
-async function fetchAllPrices(sym) {
-    const settled = await Promise.allSettled(PRICE_SOURCES.map(async src => {
-        const p = await src.get(sym);
-        if (!(p > 0)) throw new Error('bad price');
-        return { name: src.name, price: p };
-    }));
-    const ok = [];
-    const failed = {};
-    settled.forEach((r, i) => {
-        if (r.status === 'fulfilled') ok.push(r.value);
-        else failed[PRICE_SOURCES[i].name] = String((r.reason && r.reason.message) || r.reason);
-    });
-    let price = 0;
-    if (ok.length) {
-        const m0 = medianOf(ok.map(o => o.price));
-        const near = ok.filter(o => Math.abs(o.price - m0) / m0 <= 0.03);   // drop outliers
-        price = medianOf((near.length ? near : ok).map(o => o.price));
+// Telegram task (auto verify)
+// Task channel verification se alag hai. Bot ko @paymentchanneluta me admin banana zaroori hai (membership check ke liye).
+const TASK_CHANNEL = { id: '@paymentchanneluta', name: 'Telegram Task Channel' };
+
+// Payment proof channel: har paid withdraw yahan auto post hota hai.
+// Bot ko is channel me ADMIN banao (Post Messages permission ke saath). Channel badalna ho to sirf neeche wali line badlo.
+const PAYMENT_CHANNEL = '@cryptotech16';
+
+// YouTube tasks (Open -> Submit -> Claim)
+const YT_TASKS = ['yt1', 'yt2'];
+
+const WELCOME_TEXT = 'Hello, welcome to <b>USDC ONE</b>! 🚀 Get ready for an exciting earning experience!\n\n' +
+    'Join us, tap the coin, complete daily challenges, and invite your friends to earn USDC rewards! ' +
+    'Build your team and boost your daily earnings!\n\n' +
+    '🔥 <b>Let\'s earn with USDC ONE!</b>';
+
+// ---------- DATABASE (server band nahi hota, DB connect na ho to retry karta hai) ----------
+async function connectDB() {
+    try {
+        await mongoose.connect(MONGO_URI, { serverSelectionTimeoutMS: 15000 });
+        console.log('✅ MongoDB connected');
+    } catch (err) {
+        console.error('❌ MongoDB error:', err.message, '- retrying in 10s');
+        setTimeout(connectDB, 10000);
     }
-    return { price, ok, failed };
 }
+connectDB();
 
-async function getCoinPriceUsd(sym) {
-    sym = String(sym || '').toUpperCase();
-    if (STABLE.has(sym)) return 1;
+const dbReady = () => mongoose.connection.readyState === 1;
 
-    const cached = priceCache[sym];
-    if (cached && Date.now() - cached.time < PRICE_FRESH_MS) return cached.price;
-
-    if (!priceInflight[sym]) {
-        priceInflight[sym] = (async () => {
-            try {
-                const { price, ok } = await fetchAllPrices(sym);
-                if (price > 0) {
-                    priceCache[sym] = { price, time: Date.now(), sources: ok.length };
-                    return price;
-                }
-            } catch (e) { console.log('price fetch error', sym, e.message); }
-            return 0;
-        })().finally(() => { delete priceInflight[sym]; });
-    }
-    const fresh = await priceInflight[sym];
-    if (fresh > 0) return fresh;
-
-    if (cached && Date.now() - cached.time < PRICE_STALE_MS) return cached.price;
-    if (sym === 'TRX') return 0.33;
-    return 0;
-}
-
-async function getTrxPrice() {
-    const p = await getCoinPriceUsd('TRX');
-    return p > 0 ? p : 0.33;
-}
-
-function isPaidPlanActive(u, now = Date.now()) {
-    return u.planActive !== false && Number(u.ghs) > 0 && !(u.planExpiryDate > 0 && now >= u.planExpiryDate);
-}
-
-// last known TRX price without waiting (used only as a fallback)
-function trxPriceSync() {
-    const c = priceCache['TRX'];
-    return (c && c.price > 0) ? c.price : 0.33;
-}
-
-// USD value per day for this user (background value)
-function dailyUsdRate(u, now = Date.now()) {
-    return isPaidPlanActive(u, now) ? Number(u.ghs) * PAID_RATE_PER_GHS_USD : FREE_DAILY_USD;
-}
-
-// USD value mined since lastClaimTime that is not settled yet
-function accrueUsd(u, now = Date.now()) {
-    const last = Number(u.lastClaimTime) || now;
-    if (now <= last) return 0;
-    let usd = 0;
-    let cursor = last;
-    if (u.planActive !== false && Number(u.ghs) > 0) {
-        const paidEnd = (u.planExpiryDate > 0) ? Math.min(now, u.planExpiryDate) : now;
-        if (paidEnd > cursor) {
-            usd += ((paidEnd - cursor) / 1000) * (Number(u.ghs) * PAID_RATE_PER_GHS_USD / 86400);
-            cursor = paidEnd;
-        }
-    }
-    if (now > cursor) {
-        usd += ((now - cursor) / 1000) * (FREE_DAILY_USD / 86400);
-    }
-    return usd;
-}
-
-// TRX that this unsettled USD value turns into at the given TRX price
-function accrueTrx(u, now, price) {
-    price = price > 0 ? price : trxPriceSync();
-    return accrueUsd(u, now) / price;
-}
-
-// TRX total that is waiting to be collected (already locked TRX + old USD leftovers + new mining) at this price
-function pendingTrxAt(u, now, price) {
-    price = price > 0 ? price : trxPriceSync();
-    return Number(u.accruedTrx || 0) + Number(u.accruedUsd || 0) / price + accrueTrx(u, now, price);
-}
-
-// locks everything mined so far into accruedTrx (at the given price) and restarts the timer
-function settleAccrual(u, now = Date.now(), price = 0) {
-    u.accruedTrx = pendingTrxAt(u, now, price);
-    u.accruedUsd = 0;
-    u.lastClaimTime = now;
-}
-
-// same thing but safe against two requests at the same time (used by the app's refresh)
-async function settleAtomic(u, now, price) {
-    const trx = pendingTrxAt(u, now, price);
-    const done = await User.findOneAndUpdate(
-        { id: u.id, lastClaimTime: u.lastClaimTime },
-        { $set: { accruedTrx: trx, accruedUsd: 0, lastClaimTime: now } },
-        { new: true }
-    );
-    return done || await User.findOne({ id: u.id });
-}
-
-function expireUserPlan(u, now = Date.now(), price = 0) {
-    settleAccrual(u, now, price);
-    u.ghs = 0;
-    u.planActive = false;
-    u.planExpiryDate = 0;
-    u.planStartDate = 0;
-}
-
-// ================== DATABASE ==================
-mongoose.connect(MONGO_URI)
-    .then(async () => {
-        console.log('✅ Connected to MongoDB Atlas Successfully!');
-
-        const RESET_KEY = 'data_reset_v1';
-        try {
-            const metaCol = mongoose.connection.collection('meta');
-            const alreadyReset = await metaCol.findOne({ _id: RESET_KEY });
-            if (!alreadyReset) {
-                await mongoose.model('User').deleteMany({});
-                await mongoose.model('PendingRequest').deleteMany({});
-                await metaCol.insertOne({ _id: RESET_KEY, at: Date.now() });
-                console.log('🧹 ALL DATA RESET TO ZERO (one-time)!');
-            }
-        } catch (err) {
-            console.log('Reset error:', err);
-        }
-
-        try {
-            const currentTime = Date.now();
-            const startPrice = await getTrxPrice();
-            const allUsers = await mongoose.model('User').find({});
-            for (let u of allUsers) {
-                if (u.planActive && u.ghs > 0 && (!u.planStartDate || u.planStartDate === 0)) {
-                    if (u.deposits && Array.isArray(u.deposits)) {
-                        const paidDep = u.deposits.find(d => d.status === 'PAID');
-                        if (paidDep && paidDep.date) {
-                            let parsedTime = Date.parse(paidDep.date);
-                            if (!isNaN(parsedTime)) {
-                                u.planStartDate = parsedTime;
-                                u.planExpiryDate = parsedTime + PLAN_DURATION_MS;
-                                await u.save();
-                            }
-                        }
-                    }
-                }
-
-                if (u.planActive && u.planExpiryDate && u.planExpiryDate > 0 && currentTime >= u.planExpiryDate) {
-                    expireUserPlan(u, currentTime, startPrice);
-                    await u.save();
-                }
-            }
-            console.log('✅ All users plans & 10-day plan expiries auto-synced!');
-        } catch (err) {
-            console.log('Auto-sync error:', err);
-        }
-    })
-    .catch(err => console.error('❌ MongoDB Connection Error:', err));
-
-const userSchema = new mongoose.Schema({
+const UserSchema = new mongoose.Schema({
     id: { type: String, required: true, unique: true },
     username: { type: String, default: 'User' },
-    balance: { type: Number, default: 0 },
-    ghs: { type: Number, default: 0 },
-    lastClaimTime: { type: Number, default: Date.now },
-    accruedTrx: { type: Number, default: 0 },      // mined TRX (locked at settle time) not yet claimed
-    accruedUsd: { type: Number, default: 0 },      // old field, only kept so old data converts to TRX
-    deposits: { type: Array, default: [] },
-    withdrawals: { type: Array, default: [] },
+    balance: { type: Number, default: 0 },            // micro-USDC (integer)
+    isVerified: { type: Boolean, default: false },
     isBanned: { type: Boolean, default: false },
-    planActive: { type: Boolean, default: true },
-    planStartDate: { type: Number, default: 0 },
-    planExpiryDate: { type: Number, default: 0 },
-    referredBy: { type: String, default: null },
-    referrals: {
-        level1: { type: Array, default: [] },
-        level2: { type: Array, default: [] },
-        level3: { type: Array, default: [] }
+    tasks: {
+        tg2: { type: Boolean, default: false },
+        yt1: { type: Boolean, default: false },
+        yt2: { type: Boolean, default: false }
     },
-    refEarnings: {
-        level1: { type: Number, default: 0 },
-        level2: { type: Number, default: 0 },
-        level3: { type: Number, default: 0 }
-    }
+    // tap system (UTC din ke hisaab se reset)
+    tapDay: { type: String, default: '' },
+    tapDone: { type: Number, default: 0 },
+    tapLine: { type: Number, default: 0 },
+    tapNext: { type: Number, default: 0 },
+    lastTapAt: { type: Number, default: 0 },
+    // withdraw wallet: pehle withdraw par lock, ek wallet = ek account
+    wallet: { type: String, default: null },
+    referredBy: { type: String, default: null },
+    refCredited: { type: Boolean, default: false },
+    referrals: { type: Array, default: [] },
+    totalWithdrawn: { type: Number, default: 0 },     // micro-USDC
+    withdrawals: { type: Array, default: [] },
+    createdAt: { type: Number, default: Date.now }
 });
-const User = mongoose.model('User', userSchema);
+// Ek wallet sirf ek account par (null wale ignore hote hain)
+UserSchema.index({ wallet: 1 }, { unique: true, partialFilterExpression: { wallet: { $type: 'string' } } });
+const User = mongoose.model('User', UserSchema);
 
-const pendingRequestSchema = new mongoose.Schema({
+// userId unique: ek user ki ek waqt mein sirf ek pending withdrawal
+const PendingRequest = mongoose.model('PendingRequest', new mongoose.Schema({
     reqId: { type: String, required: true, unique: true },
-    type: { type: String, required: true },
-    userId: { type: String, required: true },
-    username: { type: String },
-    amount: { type: String, required: true },      // display string in the user's chosen coin, e.g. "3.061200 TRX"
-    usdtAmount: { type: Number, default: 1 },
-    coin: { type: String },                        // e.g. "LTC (Litecoin)"
-    coinSymbol: { type: String },                  // e.g. "LTC"
-    coinAmount: { type: Number, default: 0 },      // exact amount in that coin
-    trxAmount: { type: Number, default: 0 },       // withdraw: TRX deducted from balance (used for refunds)
-    usdValue: { type: Number, default: 0 },
-    price: { type: Number, default: 0 },           // live coin price (USD) at request time
-    txHash: { type: String },
-    address: { type: String },
-    adminMsgId: { type: Number },
-    status: { type: String, default: 'PENDING' }
-});
-const PendingRequest = mongoose.model('PendingRequest', pendingRequestSchema);
+    userId: { type: String, required: true, unique: true },
+    amount: { type: Number, required: true },         // micro-USDC
+    address: { type: String, required: true }
+}));
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// YouTube pending claim: userId unique => ek user ka ek waqt mein sirf ek pending claim.
+const PendingClaim = mongoose.model('PendingClaim', new mongoose.Schema({
+    userId: { type: String, required: true, unique: true },
+    task: { type: String, required: true },
+    createdAt: { type: Number, default: Date.now }
+}));
 
-app.use((req, res, next) => {
-    req.cookies = {};
-    const cookieHeader = req.headers.cookie;
-    if (cookieHeader) {
-        cookieHeader.split(';').forEach(cookie => {
-            const parts = cookie.split('=');
-            req.cookies[parts.shift().trim()] = decodeURIComponent(parts.join('='));
-        });
+// ---------- MULTIPLE ACCOUNT DETECTION (1 device = 1 account) ----------
+const DEVICE_LOCK = true;   // false = detection band
+const FP_LOCK = true;       // phone fingerprint se bhi block. Galat block par admin "Reset Device" use kare.
+
+const Device = mongoose.model('Device', new mongoose.Schema({
+    deviceId: { type: String, required: true, unique: true },
+    userId: { type: String, required: true, index: true },
+    fp: { type: String, default: '', index: true },
+    fp2: { type: String, default: '', index: true },
+    ip: { type: String, default: '' },
+    createdAt: { type: Number, default: Date.now },
+    lastSeen: { type: Number, default: Date.now }
+}));
+
+function normIp(ip) {
+    ip = String(ip || '').replace(/^::ffff:/, '');
+    if (ip.includes(':')) return ip.split(':').slice(0, 4).join(':');
+    return ip;
+}
+
+// returns null (ok) | 'conflict' | 'missing'   ("pehla account jeetta hai")
+async function deviceConflict(userId, deviceId, fp, fp2, ip) {
+    if (!deviceId || deviceId.length < 8 || deviceId.length > 100) return 'missing';
+
+    const or = [{ deviceId }];
+    if (FP_LOCK && fp) or.push({ fp });
+    if (FP_LOCK && fp2 && ip) or.push({ fp2, ip });
+
+    const others = await Device.find({ userId: { $ne: userId }, $or: or }, { createdAt: 1 });
+    const mine = await Device.findOne({ deviceId, userId });
+
+    if (others.length) {
+        if (!mine) return 'conflict';
+        const oldestOther = Math.min(...others.map(o => o.createdAt));
+        if (mine.createdAt >= oldestOther) return 'conflict';
     }
-    next();
-});
 
-// the Mini App is hosted on another domain (Vercel), so CORS must allow it and its login header
-app.use((req, res, next) => {
-    res.header('Access-Control-Allow-Origin', '*');
-    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, X-Tg-Init-Data');
-    res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    if (!mine) {
+        try { await Device.create({ deviceId, userId, fp, fp2, ip }); }
+        catch (e) {
+            const d = await Device.findOne({ deviceId });
+            if (d && d.userId !== userId) return 'conflict';
+        }
+    } else if (mine.fp !== fp || mine.fp2 !== fp2 || mine.ip !== ip) {
+        await Device.updateOne({ deviceId, userId }, { $set: { fp, fp2, ip, lastSeen: Date.now() } });
+    }
+    return null;
+}
+
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const wrap = fn => (req, res, next) => fn(req, res, next).catch(e => {
+    console.log('Error:', e);
+    res.status(500).json({ ok: false, error: 'Server error' });
+});
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const utcDay = (ms = Date.now()) => new Date(ms).toISOString().slice(0, 10);
+
+// ---------- RATE LIMIT / REPLAY PROTECTION / LOCKS ----------
+const rlMap = new Map();
+function rl(key, max, win) {
+    const now = Date.now();
+    let e = rlMap.get(key);
+    if (!e || now - e.t > win) { e = { n: 0, t: now }; rlMap.set(key, e); }
+    e.n++;
+    return e.n <= max;
+}
+
+const nonces = new Map();      // nonce -> expiry
+const guardAt = new Map();     // userId -> last channel-check time (tap ke liye cache)
+const NONCE_TTL = 20 * 60 * 1000;
+
+setInterval(() => {
+    const now = Date.now();
+    for (const [k, e] of rlMap) if (now - e.t > 120000) rlMap.delete(k);
+    for (const [k, t] of nonces) if (t < now) nonces.delete(k);
+    for (const [k, t] of guardAt) if (now - t > 3600000) guardAt.delete(k);
+}, 60000).unref();
+
+// Ek user ke tap requests ek ke baad ek chalte hain (double-credit / race se bachao)
+const locks = new Map();
+async function withLock(key, fn) {
+    const prev = locks.get(key) || Promise.resolve();
+    let release;
+    const cur = new Promise(r => { release = r; });
+    const chain = prev.then(() => cur);
+    locks.set(key, chain);
+    await prev;
+    try { return await fn(); }
+    finally { release(); if (locks.get(key) === chain) locks.delete(key); }
+}
+
+async function tg(method, body) {
+    try {
+        const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+            signal: AbortSignal.timeout(8000)
+        });
+        return await r.json();
+    } catch (e) {
+        console.log('Telegram error:', method, e.message);
+        return { ok: false, description: e.message };
+    }
+}
+
+const sendMsg = (chat_id, text, reply_markup, html = true) =>
+    tg('sendMessage', { chat_id, text, reply_markup, ...(html ? { parse_mode: 'HTML' } : {}) });
+
+// true = member, false = not member, null = Telegram error
+async function isMember(channel, userId) {
+    const r = await tg('getChatMember', { chat_id: channel, user_id: Number(userId) });
+    if (!r.ok) {
+        console.log('getChatMember failed for', channel, r.description || '');
+        return null;
+    }
+    const s = r.result.status;
+    return ['member', 'administrator', 'creator'].includes(s) || (s === 'restricted' && r.result.is_member === true);
+}
+
+async function checkVerifyChannels(userId) {
+    const missing = [];
+    for (const ch of VERIFY_CHANNELS) {
+        const m = await isMember(ch.id, userId);
+        if (m === null) return { error: 'Channel check failed' };
+        if (!m) missing.push(ch.name);
+    }
+    return { ok: missing.length === 0, missing };
+}
+
+// user verified ho + abhi bhi required channels mein ho. Fail par error string, pass par null.
+async function telegramGuard(user) {
+    if (!user.isVerified) return 'Please verify channels first.';
+    const c = await checkVerifyChannels(user.id);
+    if (c.error) return 'Could not verify right now, please try again shortly';
+    if (!c.ok) {
+        await User.updateOne({ id: user.id }, { isVerified: false });
+        guardAt.delete(user.id);
+        return 'Must join all channels and tap Check again.';
+    }
+    return null;
+}
+
+// Tap ke liye: har batch par Telegram call nahi, 5 minute me ek baar channel check
+async function guardCached(user) {
+    if (Date.now() - (guardAt.get(user.id) || 0) < 5 * 60 * 1000) return null;
+    const g = await telegramGuard(user);
+    if (!g) guardAt.set(user.id, Date.now());
+    return g;
+}
+
+function validateInitData(initData) {
+    if (!initData || initData.length > 4096) return null;
+    const p = new URLSearchParams(initData);
+    const hash = p.get('hash');
+    if (!hash) return null;
+    p.delete('hash');
+    const str = [...p.entries()].map(([k, v]) => `${k}=${v}`).sort().join('\n');
+    const secret = crypto.createHmac('sha256', 'WebAppData').update(BOT_TOKEN).digest();
+    const calc = crypto.createHmac('sha256', secret).update(str).digest('hex');
+    const a = Buffer.from(calc), b = Buffer.from(hash);
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+    if (Date.now() / 1000 - Number(p.get('auth_date') || 0) > 86400) return null;
+    try { return JSON.parse(p.get('user')); } catch (e) { return null; }
+}
+
+function displayName(u) { return u.username ? `@${u.username}` : (u.first_name || 'User'); }
+
+async function auth(req, res, next) {
+    try {
+        // Database abhi connect nahi hua to saaf message do (crash ya 404 nahi)
+        if (!dbReady()) return res.status(503).json({ ok: false, error: 'Server is starting, please try again in a minute' });
+
+        // IP level rate limit
+        if (!rl('ip:' + req.ip, 600, 60000)) return res.status(429).json({ ok: false, error: 'Too many requests. Please slow down.' });
+
+        const u = validateInitData(req.headers['x-init-data']);
+        if (!u || !u.id) return res.status(401).json({ ok: false, error: 'Please open via bot.' });
+        const id = String(u.id);
+
+        // Replay protection: fresh timestamp + ek nonce sirf ek baar
+        const ts = Number(req.headers['x-ts']);
+        const nonce = String(req.headers['x-nonce'] || '');
+        if (!Number.isFinite(ts) || Math.abs(Date.now() - ts) > 15 * 60 * 1000) {
+            return res.status(400).json({ ok: false, error: 'Please set your phone date & time to automatic and reopen the app.' });
+        }
+        if (nonce.length < 8 || nonce.length > 64 || nonces.has(id + ':' + nonce) || nonces.size > 300000) {
+            return res.status(400).json({ ok: false, error: 'Invalid request. Please reopen the app.' });
+        }
+        nonces.set(id + ':' + nonce, Date.now() + NONCE_TTL);
+
+        // User level rate limit
+        if (!rl('u:' + id, 150, 60000)) return res.status(429).json({ ok: false, error: 'Too many requests. Please slow down.' });
+
+        const user = await User.findOneAndUpdate(
+            { id },
+            { $set: { username: displayName(u) } },
+            { upsert: true, new: true, setDefaultsOnInsert: true }
+        );
+        if (user.isBanned) return res.status(403).json({ ok: false, banned: true, error: 'Your account is banned.' });
+
+        if (DEVICE_LOCK) {
+            const dev = await deviceConflict(
+                id,
+                String(req.headers['x-device-id'] || '').trim(),
+                String(req.headers['x-device-fp'] || '').trim().slice(0, 64),
+                String(req.headers['x-device-fp2'] || '').trim().slice(0, 64),
+                normIp(req.ip)
+            );
+            if (dev === 'conflict') {
+                return res.status(403).json({ ok: false, code: 'MULTI_ACCOUNT', error: 'Multiple account detected. Only one account per device is allowed.' });
+            }
+            if (dev === 'missing') {
+                return res.status(400).json({ ok: false, error: 'Please reopen the app from the bot.' });
+            }
+        }
+
+        req.user = user;
+        next();
+    } catch (e) {
+        console.log('Auth error:', e);
+        res.status(500).json({ ok: false, error: 'Server error' });
+    }
+}
+
+// Aaj ka tap state (naya UTC din = reset)
+function tapState(u) {
+    const same = u.tapDay === utcDay();
+    return { done: same ? u.tapDone : 0, line: same ? u.tapLine : 0, next: same ? u.tapNext : 0 };
+}
+
+// proof: { task, status: 'ready' } => frontend Submit ki jagah Claim button dikhaye
+function publicUser(u, pending) {
+    const t = tapState(u);
+    return {
+        id: u.id,
+        username: u.username,
+        balance: fromMicro(u.balance),
+        serverTime: Date.now(),
+        isVerified: u.isVerified,
+        tasks: {
+            tg2: !!(u.tasks && u.tasks.tg2),
+            yt1: !!(u.tasks && u.tasks.yt1),
+            yt2: !!(u.tasks && u.tasks.yt2)
+        },
+        tap: {
+            done: t.done,
+            max: ROUNDS_PER_DAY,
+            target: TAP_TARGET,
+            perTap: ROUND_REWARD / TAP_TARGET / U,
+            lineTaps: t.line,
+            cooldown: COOLDOWN,
+            nextTime: t.next
+        },
+        proof: pending ? { task: pending.task, status: 'ready' } : null,
+        referrals: u.referrals,
+        withdrawals: u.withdrawals.slice(0, 50)
+    };
+}
+
+async function userView(u) {
+    const p = await PendingClaim.findOne({ userId: u.id });
+    return publicUser(u, p);
+}
+
+// CORS: mini app kisi bhi host se khule, API calls kaam karein
+app.use('/api', (req, res, next) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-init-data, x-device-id, x-device-fp, x-device-fp2, x-ts, x-nonce');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     if (req.method === 'OPTIONS') return res.sendStatus(204);
     next();
 });
 
-// Signed cookie sessions: still valid after the server sleeps/restarts (Render free plan restarts often)
-const SESSION_SECRET = process.env.SESSION_SECRET || (String(BOT_TOKEN || '') + String(ADMIN_PASSWORD || '') + 'tr-session');
-function signSession(exp) { return crypto.createHmac('sha256', SESSION_SECRET).update(String(exp)).digest('hex'); }
-function makeSession() { const exp = Date.now() + 24 * 60 * 60 * 1000; return exp + '.' + signSession(exp); }
-function validSession(token) {
-    try {
-        if (!token) return false;
-        const parts = String(token).split('.');
-        if (parts.length !== 2) return false;
-        const exp = Number(parts[0]);
-        if (!(exp > Date.now())) return false;
-        const a = Buffer.from(parts[1]);
-        const b = Buffer.from(signSession(exp));
-        return a.length === b.length && crypto.timingSafeEqual(a, b);
-    } catch (e) { return false; }
-}
+app.use(express.json({ limit: '10kb' }));
+app.use(express.urlencoded({ extended: false, limit: '10kb' }));
+app.use((req, res, next) => { res.setHeader('X-Content-Type-Options', 'nosniff'); next(); });
+app.use(express.static(path.join(__dirname, 'public')));
+app.get('/health', (req, res) => res.send(dbReady() ? 'OK' : 'OK (database connecting)'));
+app.get('/api/ping', (req, res) => res.json({ ok: true, db: dbReady(), version: 'usdc-one-v1' }));
 
-const loginFails = {};
-function loginBlocked(ip) { const f = loginFails[ip]; return !!(f && f.count >= 8 && Date.now() - f.last < 10 * 60 * 1000); }
+// ---------- USER API ----------
 
-function checkAdminAuth(req, res, next) {
-    if (validSession(req.cookies.admin_session)) return next();
-    if (req.method !== 'GET') return res.status(401).json({ success: false, message: "Session expired. Please login again." });
-    return res.redirect('/admin/login');
-}
-
-// ================== TELEGRAM HELPERS (HTML mode - no more Markdown errors) ==================
-function stripTags(t) { return String(t).replace(/<[^>]*>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&'); }
-
-async function tgCall(method, body) {
-    const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-    });
-    return await r.json();
-}
-
-async function sendTelegramMessage(chatId, text, replyMarkup = null) {
-    try {
-        let body = { chat_id: chatId, text: text, parse_mode: 'HTML' };
-        if (replyMarkup) body.reply_markup = replyMarkup;
-        let data = await tgCall('sendMessage', body);
-        if (!data.ok) {
-            console.log('Telegram sendMessage failed:', data.description);
-            // fallback: plain text, so admin/user always gets the message
-            delete body.parse_mode;
-            body.text = stripTags(text);
-            data = await tgCall('sendMessage', body);
-        }
-        return data;
-    } catch (e) {
-        console.log("Telegram API Error:", e);
-        return null;
-    }
-}
-
-async function sendTelegramPhoto(chatId, photoUrl, caption = '', replyMarkup = null) {
-    try {
-        let body = { chat_id: chatId, photo: photoUrl, caption: caption, parse_mode: 'HTML' };
-        if (replyMarkup) body.reply_markup = replyMarkup;
-        let data = await tgCall('sendPhoto', body);
-        if (!data.ok) {
-            console.log('Telegram sendPhoto failed:', data.description);
-            delete body.parse_mode;
-            body.caption = stripTags(caption);
-            data = await tgCall('sendPhoto', body);
-        }
-        return data;
-    } catch (e) {
-        console.log("Telegram Photo Broadcast Error:", e);
-        return null;
-    }
-}
-
-async function editTelegramMessage(chatId, messageId, text, replyMarkup = null) {
-    try {
-        let body = { chat_id: chatId, message_id: messageId, text: text, parse_mode: 'HTML' };
-        if (replyMarkup) body.reply_markup = replyMarkup;
-        let data = await tgCall('editMessageText', body);
-        if (!data.ok) {
-            console.log('Telegram edit failed:', data.description);
-            delete body.parse_mode;
-            body.text = stripTags(text);
-            data = await tgCall('editMessageText', body);
-        }
-        return data;
-    } catch (e) {
-        console.log("Telegram Edit Error:", e);
-        return null;
-    }
-}
-
-async function answerCallbackQuery(callbackQueryId, text, showAlert = false) {
-    try {
-        await tgCall('answerCallbackQuery', { callback_query_id: callbackQueryId, text: text, show_alert: showAlert });
-    } catch (e) {
-        console.log("Callback Answer Error:", e);
-    }
-}
-
-// ================== REQUEST TEXT (admin) ==================
-function reqAmountLabel(r) {
-    const a = String(r.amount || '');
-    if (/[A-Za-z]/.test(a)) return a;
-    return r.type === 'withdraw' ? `${a} TRX` : a;
-}
-
-function adminRequestText(r, statusLine) {
-    const uname = r.username ? ` (${esc(r.username)})` : '';
-    let t;
-    if (r.type === 'deposit') {
-        t = `📥 <b>Deposit Request</b>\n\n` +
-            `👤 User: <code>${esc(r.userId)}</code>${uname}\n` +
-            `🪙 Coin: <b>${esc(r.coin || r.coinSymbol || 'TRX')}</b>\n` +
-            `💰 Amount: <b>${esc(reqAmountLabel(r))}</b>\n` +
-            `💵 Worth: ≈ ${esc(r.usdtAmount)} USDT` +
-            (r.price > 0 && r.coinSymbol && !STABLE.has(r.coinSymbol) ? `\n📈 Live Rate: 1 ${esc(r.coinSymbol)} = $${Number(r.price).toFixed(4)}` : '') +
-            `\n🔑 TxHash: <code>${esc(r.txHash)}</code>`;
-    } else {
-        t = `📤 <b>Withdraw Request</b>\n\n` +
-            `👤 User: <code>${esc(r.userId)}</code>${uname}\n` +
-            `🪙 Coin: <b>${esc(r.coin || r.coinSymbol || 'TRX')}</b>\n` +
-            `💰 Pay Amount: <b>${esc(reqAmountLabel(r))}</b>\n` +
-            `💵 Value: <b>$${Number(r.usdValue || 0).toFixed(2)}</b> (deducted ${Number(r.trxAmount || parseFloat(r.amount) || 0).toFixed(4)} TRX)` +
-            (r.price > 0 && r.coinSymbol && !STABLE.has(r.coinSymbol) ? `\n📈 Live Rate: 1 ${esc(r.coinSymbol)} = $${Number(r.price).toFixed(4)}` : '') +
-            `\n🏦 Address:\n<code>${esc(r.address)}</code>`;
-    }
-    if (statusLine) t += `\n\n${statusLine}`;
-    return t;
-}
-
-function approveRejectKeyboard(reqId) {
-    return {
-        inline_keyboard: [[
-            { text: "✅ Approve", callback_data: `approve_${reqId}` },
-            { text: "❌ Reject", callback_data: `reject_${reqId}` }
-        ]]
-    };
-}
-
-async function sendRequestToAdmin(reqDoc) {
-    if (!ADMIN_ID) return;
-    const res = await sendTelegramMessage(ADMIN_ID, adminRequestText(reqDoc), approveRejectKeyboard(reqDoc.reqId));
-    if (res && res.ok && res.result && res.result.message_id) {
-        await PendingRequest.updateOne({ reqId: reqDoc.reqId }, { $set: { adminMsgId: res.result.message_id } });
-    }
-}
-
-// ================== PLAN EXPIRY BACKGROUND JOB ==================
-setInterval(async () => {
-    try {
-        const currentTime = Date.now();
-        const expiredUsers = await User.find({
-            planActive: true,
-            planExpiryDate: { $gt: 0, $lte: currentTime }
-        });
-
-        const jobPrice = expiredUsers.length ? await getTrxPrice() : 0;
-        for (let u of expiredUsers) {
-            expireUserPlan(u, currentTime, jobPrice);
-            await u.save();
-
-            sendTelegramMessage(
-                u.id,
-                `❌ <b>Plan Expired:</b> Your mining plan has expired. Please renew your plan to keep earning 🚀`
-            );
-        }
-    } catch (err) {
-        console.log("Background Plan Expiry Error:", err);
-    }
-}, 5 * 60 * 1000);
-
-function getPlanDaysFormat(user) {
-    if (!user.planActive || user.ghs <= 0) {
-        return "N/A";
-    }
-
-    let startTimestamp = user.planStartDate;
-    if (!startTimestamp || startTimestamp === 0) {
-        if (user.deposits && Array.isArray(user.deposits)) {
-            const paidDep = user.deposits.find(d => d.status === 'PAID');
-            if (paidDep && paidDep.date) {
-                let parsedTime = Date.parse(paidDep.date);
-                if (!isNaN(parsedTime)) {
-                    startTimestamp = parsedTime;
-                }
-            }
+app.post('/api/me', auth, wrap(async (req, res) => {
+    let u = req.user;
+    if (u.isVerified) {
+        const r = await checkVerifyChannels(u.id);
+        if (r.ok === false) {
+            await User.updateOne({ id: u.id }, { isVerified: false });
+            u = await User.findOne({ id: u.id });
         }
     }
-    if (!startTimestamp || startTimestamp === 0) {
-        startTimestamp = Date.now();
-    }
+    res.json({ ok: true, data: await userView(u) });
+}));
 
-    const now = Date.now();
-    const elapsed = now - startTimestamp;
-    let daysPassed = Math.floor(elapsed / (1000 * 60 * 60 * 24)) + 1;
-    if (daysPassed > 10) daysPassed = 10;
-    if (daysPassed < 1) daysPassed = 1;
+app.post('/api/verify', auth, wrap(async (req, res) => {
+    const u = req.user;
+    const r = await checkVerifyChannels(u.id);
+    if (r.error) return res.json({ ok: false, error: 'Could not verify right now, please try again shortly' });
+    if (!r.ok) return res.json({ ok: false, missing: r.missing, error: 'Must join all channels and tap Check again.' });
 
-    return `${daysPassed}/10 Days`;
-}
+    await User.updateOne({ id: u.id }, { isVerified: true });
 
-function setRequestStatus(list, reqId, pendingNames, newStatus) {
-    let idx = list.findIndex(x => String(x.id) === String(reqId));
-    if (idx !== -1) {
-        list[idx].status = newStatus;
-    } else {
-        let p = list.find(x => pendingNames.includes(x.status));
-        if (p) p.status = newStatus;
-    }
-}
-
-function reqTrx(reqDoc) {
-    const t = Number(reqDoc.trxAmount);
-    if (t > 0) return t;
-    return parseFloat(reqDoc.amount) || 0;
-}
-
-async function payReferralCommissions(depositUser, usdtAmount) {
-    const rates = [0.15, 0.03, 0.01];
-    let current = depositUser;
-    const trxPrice = await getTrxPrice();
-    const depositingUserId = depositUser.id;
-    const seenUsers = new Set([depositingUserId]);
-
-    for (let lvl = 1; lvl <= 3; lvl++) {
-        if (!current.referredBy) break;
-        const refUser = await User.findOne({ id: current.referredBy });
-        if (!refUser) break;
-        if (seenUsers.has(refUser.id)) break;      // never pay a loop
-        seenUsers.add(refUser.id);
-
-        const commUsdt = usdtAmount * rates[lvl - 1];
-        const commTrx = commUsdt / trxPrice;
-
-        refUser.balance += commTrx;
-        refUser.refEarnings[`level${lvl}`] = (refUser.refEarnings[`level${lvl}`] || 0) + commTrx;
-        refUser.markModified('refEarnings');
-
-        if (!refUser.referrals[`level${lvl}`]) {
-            refUser.referrals[`level${lvl}`] = [];
-        }
-
-        let refList = refUser.referrals[`level${lvl}`];
-        let existingRefIndex = refList.findIndex(r => (typeof r === 'string' ? r === depositingUserId : r.id === depositingUserId));
-
-        if (existingRefIndex !== -1) {
-            if (typeof refList[existingRefIndex] === 'string') {
-                refList[existingRefIndex] = {
-                    id: depositingUserId,
-                    joinedDate: 'Active',
-                    bonusEarned: commTrx
-                };
-            } else {
-                refList[existingRefIndex].bonusEarned = (Number(refList[existingRefIndex].bonusEarned) || 0) + commTrx;
-            }
-        } else {
-            refList.push({
-                id: depositingUserId,
-                joinedDate: 'Active',
-                bonusEarned: commTrx
-            });
-        }
-        refUser.markModified(`referrals.level${lvl}`);
-
-        await refUser.save();
-
-        sendTelegramMessage(
-            refUser.id,
-            `🎁 Received +${commTrx.toFixed(4)} TRX ($${commUsdt.toFixed(2)} USDT) (${rates[lvl - 1] * 100}% Level ${lvl} Referral Commission)!`
+    if (u.referredBy && !u.refCredited) {
+        const claimed = await User.findOneAndUpdate(
+            { id: u.id, refCredited: false },
+            { refCredited: true }
         );
-
-        current = refUser;
+        if (claimed) {
+            const ref = await User.findOneAndUpdate({ id: u.referredBy }, {
+                $inc: { balance: REF_BONUS },
+                $push: { referrals: { id: u.id, date: new Date().toISOString(), bonus: fromMicro(REF_BONUS) } }
+            });
+            if (ref) sendMsg(ref.id, `🎁 <b>New referral joined!</b>\nUser ID: <code>${esc(u.id)}</code>\n+${fmtU(REF_BONUS)} USDC added to your balance.`);
+        }
     }
-}
+    const fresh = await User.findOne({ id: u.id });
+    res.json({ ok: true, data: await userView(fresh) });
+}));
 
-async function approveRequest(reqDoc, u, reqId) {
-    if (reqDoc.type === 'deposit' && u) {
-        const depAmount = reqDoc.usdtAmount ? Number(reqDoc.usdtAmount) : 1;
+// ---------- TAP (har tap par USDC) ----------
+// Frontend taps batch me bhejta hai: { taps: n }. Server:
+//  - din ki limit (ROUNDS_PER_DAY) aur insani raftaar (MAX_TPS) enforce karta hai
+//  - line poori hote hi counter 0 ho jata hai, seedha nayi line (COOLDOWN = 0)
+//  - sirf wahi taps credit karta hai jo allowed hon, baqi chhod deta hai
+//  - balance atomic update hota hai, ek user ke requests lock se serial chalte hain
+app.post('/api/tap', auth, wrap(async (req, res) => {
+    const id = req.user.id;
+    const taps = Math.floor(Number(req.body.taps));
+    if (!Number.isFinite(taps) || taps < 1 || taps > 60) return res.json({ ok: false, error: 'Invalid request' });
 
-        setRequestStatus(u.deposits, reqId, ['PENDING'], 'PAID');
-        u.markModified('deposits');
+    const r = await withLock(id, async () => {
+        const u = await User.findOne({ id });
+        if (!u || !u.isVerified) return { error: 'Please verify channels first.' };
+
+        const g = await guardCached(u);
+        if (g) return { error: g };
 
         const now = Date.now();
-        settleAccrual(u, now, await getTrxPrice());
+        const today = utcDay(now);
+        const t = tapState(u);
 
-        const hadPaidPlan = isPaidPlanActive(u, now);
-        u.ghs = hadPaidPlan ? Number(u.ghs) + depAmount : depAmount;
-        u.planActive = true;
-        u.planStartDate = now;
-        u.planExpiryDate = now + PLAN_DURATION_MS;
+        if (t.done >= ROUNDS_PER_DAY) return { error: 'Daily limit reached. Come back tomorrow!', u };
+        if (now < t.next) return { error: 'Wait for the next line.', u };
 
-        await u.save();
-        await payReferralCommissions(u, depAmount);
+        // insani raftaar: pichle batch ke baad itne seconds me itne hi taps possible
+        const elapsed = Math.min(now - (u.lastTapAt || 0), 10000);
+        const allowed = Math.floor(elapsed / 1000 * MAX_TPS) + 5;
+        const n = Math.min(taps, allowed, TAP_TARGET - t.line);
+        if (n <= 0) return { u };
 
-        sendTelegramMessage(reqDoc.userId, `✅ Your deposit of <b>${esc(reqAmountLabel(reqDoc))}</b> has been approved!\n⚡ +${depAmount} GHS Mining Power added (Valid for 10 Days).\n⛏️ Mining is now active. Collect your profit anytime from the app.`);
-    } else if (reqDoc.type === 'withdraw' && u) {
-        setRequestStatus(u.withdrawals, reqId, ['PENDING', 'PEND1NG'], 'PAID');
-        u.markModified('withdrawals');
-        await u.save();
-        sendTelegramMessage(reqDoc.userId, `✅ Your withdrawal of <b>${esc(reqAmountLabel(reqDoc))}</b> has been approved and sent!`);
+        const newLine = t.line + n;
+        // cumulative integer formula: 30 taps ka total hamesha exact ROUND_REWARD
+        const credit = Math.floor(newLine * ROUND_REWARD / TAP_TARGET) - Math.floor(t.line * ROUND_REWARD / TAP_TARGET);
+        const completed = newLine >= TAP_TARGET;
+
+        const upd = await User.findOneAndUpdate(
+            { id },
+            {
+                $set: {
+                    tapDay: today,
+                    tapDone: completed ? t.done + 1 : t.done,
+                    tapLine: completed ? 0 : newLine,
+                    tapNext: completed ? now + COOLDOWN : t.next,
+                    lastTapAt: now
+                },
+                $inc: { balance: credit }
+            },
+            { new: true }
+        );
+        return { u: upd };
+    });
+
+    if (r.error) {
+        return res.json({ ok: false, error: r.error, ...(r.u ? { data: await userView(r.u) } : {}) });
     }
-}
+    res.json({ ok: true, data: await userView(r.u) });
+}));
 
-async function rejectRequest(reqDoc, u, reqId) {
-    if (reqDoc.type === 'deposit' && u) {
-        setRequestStatus(u.deposits, reqId, ['PENDING'], 'DECLINED');
-        u.markModified('deposits');
-        await u.save();
-        sendTelegramMessage(reqDoc.userId, `❌ Your deposit request was declined.`);
-    } else if (reqDoc.type === 'withdraw' && u) {
-        u.balance += reqTrx(reqDoc);
-        setRequestStatus(u.withdrawals, reqId, ['PENDING', 'PEND1NG'], 'DECLINED');
-        u.markModified('withdrawals');
-        await u.save();
-        sendTelegramMessage(reqDoc.userId, `❌ Your withdrawal request was declined and funds refunded.`);
+// Telegram Channel 2 task: membership server check karta hai
+app.post('/api/task', auth, wrap(async (req, res) => {
+    const u = req.user;
+    const taskId = String(req.body.taskId || '');
+    if (taskId !== 'tg2') return res.json({ ok: false, error: 'Invalid task' });
+    if (!u.isVerified) return res.json({ ok: false, error: 'Please verify channels first.' });
+
+    const m = await isMember(TASK_CHANNEL.id, u.id);
+    if (m === null) return res.json({ ok: false, error: 'Could not verify right now, please try again shortly' });
+    if (!m) return res.json({ ok: false, error: 'Please join the channel first!' });
+
+    const done = await User.findOneAndUpdate(
+        { id: u.id, 'tasks.tg2': { $ne: true } },
+        { $set: { 'tasks.tg2': true }, $inc: { balance: TASK_REWARD } },
+        { new: true }
+    );
+    if (!done) return res.json({ ok: false, error: 'Task already claimed.' });
+    res.json({ ok: true, data: await userView(done) });
+}));
+
+// ---------- YOUTUBE TASKS (Open -> Submit -> Claim) ----------
+
+async function ytSubmit(req, res) {
+    const u = req.user;
+    const taskId = String(req.body.taskId || '');
+    if (!YT_TASKS.includes(taskId)) return res.json({ ok: false, error: 'Invalid task' });
+
+    const guard = await telegramGuard(u);
+    if (guard) return res.json({ ok: false, error: guard });
+
+    if (u.tasks && u.tasks[taskId]) return res.json({ ok: false, error: 'Task already claimed.' });
+
+    const existing = await PendingClaim.findOne({ userId: u.id });
+    if (existing) {
+        if (existing.task === taskId) {
+            return res.json({ ok: true, alreadySubmitted: true, data: await userView(u) });
+        }
+        return res.json({ ok: false, error: 'Please claim your pending reward first.', data: await userView(u) });
     }
-}
-
-async function closeRequest(reqDoc, u, reqId) {
-    if (reqDoc.type === 'deposit' && u) {
-        setRequestStatus(u.deposits, reqId, ['PENDING'], 'CLOSED');
-        u.markModified('deposits');
-        await u.save();
-    } else if (reqDoc.type === 'withdraw' && u) {
-        u.balance += reqTrx(reqDoc);
-        setRequestStatus(u.withdrawals, reqId, ['PENDING', 'PEND1NG'], 'CLOSED');
-        u.markModified('withdrawals');
-        await u.save();
-        sendTelegramMessage(reqDoc.userId, `ℹ️ Your withdrawal request was closed and funds refunded.`);
-    }
-}
-
-// One single place that handles approve / reject / close (used by BOT buttons and ADMIN PANEL)
-async function processRequest(reqId, action, tgMsgId = null) {
-    const reqDoc = await PendingRequest.findOneAndDelete({ reqId });
-    if (!reqDoc) return { ok: false, message: "Request already handled!" };
 
     try {
-        const u = await User.findOne({ id: reqDoc.userId });
-        if (!u) throw new Error("User not found");
+        await PendingClaim.create({ userId: u.id, task: taskId, createdAt: Date.now() });
+    } catch (e) {
+        return res.json({ ok: false, error: 'Please claim your pending reward first.' });
+    }
+    res.json({ ok: true, data: await userView(u) });
+}
 
-        let statusLine;
-        if (action === 'approve') {
-            await approveRequest(reqDoc, u, reqId);
-            statusLine = '✅ <b>APPROVED</b>';
-        } else if (action === 'reject') {
-            await rejectRequest(reqDoc, u, reqId);
-            statusLine = '❌ <b>REJECTED</b>';
-        } else if (action === 'close') {
-            await closeRequest(reqDoc, u, reqId);
-            statusLine = '🚫 <b>CLOSED</b>';
-        } else {
-            throw new Error("Unknown action");
-        }
+async function ytClaim(req, res) {
+    const u = req.user;
 
-        const msgId = tgMsgId || reqDoc.adminMsgId;
-        if (msgId && ADMIN_ID) {
-            await editTelegramMessage(ADMIN_ID, msgId, adminRequestText(reqDoc, statusLine));
-        }
-        return { ok: true, message: "Action executed successfully!" };
-    } catch (err) {
-        console.log("processRequest error:", err);
-        // put the request back so the admin can try again
+    const guard = await telegramGuard(u);
+    if (guard) return res.json({ ok: false, error: guard });
+
+    const pending = await PendingClaim.findOne({ userId: u.id });
+    if (!pending) return res.json({ ok: false, error: 'Nothing to claim. Tap Submit first.' });
+
+    const wait = pending.createdAt + YT_CLAIM_DELAY - Date.now();
+    if (wait > 0) {
+        return res.json({ ok: false, error: `Please wait ${Math.ceil(wait / 1000)}s and try again.` });
+    }
+
+    const pr = await PendingClaim.findOneAndDelete({ userId: u.id, task: pending.task });
+    if (!pr) return res.json({ ok: false, error: 'Nothing to claim. Tap Submit first.' });
+
+    const key = `tasks.${pr.task}`;
+    const done = await User.findOneAndUpdate(
+        { id: u.id, [key]: { $ne: true } },
+        { $set: { [key]: true }, $inc: { balance: TASK_REWARD } },
+        { new: true }
+    );
+    if (!done) return res.json({ ok: false, error: 'Task already claimed.' });
+    res.json({ ok: true, data: await userView(done) });
+}
+
+app.post('/api/yt/submit', auth, wrap(ytSubmit));
+app.post('/api/yt/claim', auth, wrap(ytClaim));
+app.post('/api/proof/start', auth, wrap(ytSubmit));
+app.post('/api/proof/claim', auth, wrap(ytClaim));
+
+// ---------- WITHDRAW (USDC BEP-20: Trust Wallet connect ya manual address) ----------
+// Pehle withdraw par wallet account se lock ho jata hai. Baad me sirf usi wallet par withdraw hoga.
+// Ek wallet sirf ek account par chal sakta hai.
+// Auto payout ON ho aur amount <= MAX_AUTO_PAYOUT ho to USDC seedha on-chain bhej diya jata hai,
+// warna admin ko Approve / Reject ka message jata hai.
+const adminButtons = reqId => ({ inline_keyboard: [[{ text: '✅ Approve', callback_data: `approve_${reqId}` }, { text: '❌ Reject', callback_data: `reject_${reqId}` }]] });
+
+app.post('/api/withdraw', auth, wrap(async (req, res) => {
+    const u = req.user;
+    if (!rl('wd:' + u.id, 5, 60000)) return res.json({ ok: false, error: 'Too many attempts. Please wait a minute.' });
+
+    const amt = toMicro(req.body.amount);
+    const address = String(req.body.address || '').trim();
+
+    if (!u.isVerified) return res.json({ ok: false, error: 'Please verify channels first.' });
+    if (!/^0x[a-fA-F0-9]{40}$/.test(address)) return res.json({ ok: false, error: 'Invalid BEP-20 wallet address!' });
+    if (!Number.isFinite(amt) || amt < MIN_WITHDRAW) return res.json({ ok: false, error: `Minimum withdrawal is ${fmtU(MIN_WITHDRAW)} USDC!` });
+
+    const guard = await telegramGuard(u);
+    if (guard) return res.json({ ok: false, error: guard });
+
+    const addr = address.toLowerCase();
+    if (u.wallet && u.wallet !== addr) {
+        return res.json({ ok: false, error: 'Withdrawals go only to your first used wallet. Contact support to change it.' });
+    }
+    if (!u.wallet) {
         try {
-            const o = reqDoc.toObject();
-            delete o._id; delete o.__v;
-            await PendingRequest.create(o);
-        } catch (e2) { console.log("Re-queue error:", e2); }
-        return { ok: false, message: "Error: " + err.message };
-    }
-}
-
-// ================== REFERRAL REGISTER (3 LEVELS) ==================
-// The referrer must exist and must not be somebody in this user's own downline (no loops)
-async function referrerIsValid(userId, referrerId) {
-    userId = String(userId); referrerId = String(referrerId || '');
-    if (!referrerId || referrerId === userId) return false;
-    const ref = await User.findOne({ id: referrerId }, 'id referredBy');
-    if (!ref) return false;
-    let cur = ref.referredBy, hops = 0;
-    while (cur && hops < 10) {
-        if (String(cur) === userId) return false;
-        const up = await User.findOne({ id: String(cur) }, 'referredBy');
-        if (!up) break;
-        cur = up.referredBy;
-        hops++;
-    }
-    return true;
-}
-
-// A referrer can only be attached to a fresh account: no referrer yet, no deposits, no team of its own
-function canAttachReferrer(user) {
-    if (user.referredBy) return false;
-    if (user.deposits && user.deposits.length) return false;
-    const r = user.referrals || {};
-    if ((r.level1 && r.level1.length) || (r.level2 && r.level2.length) || (r.level3 && r.level3.length)) return false;
-    return true;
-}
-
-async function registerReferral(user) {
-    try {
-        if (!user || !user.referredBy) return;
-        const chatId = String(user.id);
-        let currentRefId = String(user.referredBy);
-
-        for (let lvl = 1; lvl <= 3; lvl++) {
-            if (!currentRefId || currentRefId === chatId) break;
-            const refUser = await User.findOne({ id: currentRefId });
-            if (!refUser) break;
-
-            const key = `level${lvl}`;
-            if (!refUser.referrals) refUser.referrals = { level1: [], level2: [], level3: [] };
-            if (!Array.isArray(refUser.referrals[key])) refUser.referrals[key] = [];
-
-            const exists = refUser.referrals[key].some(r => (typeof r === 'string' ? r === chatId : r.id === chatId));
-            if (!exists) {
-                refUser.referrals[key].push({ id: chatId, joinedDate: 'Active', joinedAt: Date.now(), bonusEarned: 0 });
-                refUser.markModified(`referrals.${key}`);
-                await refUser.save();
-                sendTelegramMessage(refUser.id, `🎁 <b>New Level ${lvl} Referral Joined!</b>\n${esc(user.username || 'User')} · ID: <code>${esc(chatId)}</code>`);
-            }
-            currentRefId = refUser.referredBy ? String(refUser.referredBy) : null;
+            await User.updateOne({ id: u.id, wallet: null }, { $set: { wallet: addr } });
+        } catch (e) {
+            if (e && e.code === 11000) return res.json({ ok: false, error: 'This wallet is already linked to another account.' });
+            throw e;
         }
-    } catch (err) {
-        console.log('registerReferral error:', err);
+        const fresh = await User.findOne({ id: u.id });
+        if (!fresh || fresh.wallet !== addr) return res.json({ ok: false, error: 'Withdrawals go only to your first used wallet.' });
+    }
+
+    const reqId = 'wd_' + crypto.randomBytes(6).toString('hex');
+
+    try {
+        await PendingRequest.create({ reqId, userId: u.id, amount: amt, address });
+    } catch (e) {
+        return res.json({ ok: false, error: 'You already have a pending withdrawal request.' });
+    }
+
+    let upd;
+    try {
+        upd = await User.findOneAndUpdate(
+            { id: u.id, balance: { $gte: amt } },
+            {
+                $inc: { balance: -amt },
+                $push: { withdrawals: { $each: [{ id: reqId, amount: fromMicro(amt), address, status: 'PENDING', date: new Date().toISOString() }], $position: 0 } }
+            },
+            { new: true }
+        );
+    } catch (e) {
+        await PendingRequest.deleteOne({ reqId });
+        throw e;
+    }
+    if (!upd) {
+        await PendingRequest.deleteOne({ reqId });
+        return res.json({ ok: false, error: 'Insufficient balance!' });
+    }
+
+    const view = await userView(upd);
+
+    // AUTO PAYOUT
+    if (AUTO_PAYOUT && payoutReady() && amt <= MAX_AUTO_PAYOUT) {
+        res.json({ ok: true, data: view });
+        autoPayout(reqId, u.id, amt, address).catch(e => console.log('autoPayout error:', e));
+        return;
+    }
+
+    // MANUAL: admin approve karega
+    sendMsg(ADMIN_ID,
+        `📤 <b>New Withdraw Request</b>\n\n👤 User ID: <code>${esc(u.id)}</code>\n💰 Amount: <b>${fmtU(amt)} USDC</b> (BEP-20)\n🏦 Address: <code>${esc(address)}</code>`,
+        adminButtons(reqId)
+    );
+    res.json({ ok: true, data: view });
+}));
+
+async function autoPayout(reqId, userId, amt, address) {
+    const r = await resolveWithdraw(reqId, true);
+    if (r.ok) {
+        sendMsg(ADMIN_ID, `🤖 <b>Auto payout sent</b>\n\n👤 User ID: <code>${esc(userId)}</code>\n💰 ${fmtU(amt)} USDC (BEP-20)\n🏦 <code>${esc(address)}</code>` +
+            (r.txHash ? `\n🔗 https://bscscan.com/tx/${esc(r.txHash)}` : ''));
+    } else {
+        sendMsg(ADMIN_ID,
+            `⚠️ <b>Auto payout failed</b>\n\n👤 User ID: <code>${esc(userId)}</code>\n💰 ${fmtU(amt)} USDC (BEP-20)\n🏦 <code>${esc(address)}</code>\n\nReason: ${esc(r.message || 'unknown')}` +
+            (r.restored ? '\n\nRequest is pending. Fix the issue and approve manually, or reject to refund.' : ''),
+            r.restored ? adminButtons(reqId) : undefined
+        );
     }
 }
 
-// ================== TELEGRAM WEBHOOK ==================
+// ---------- WITHDRAW RESOLVE ----------
 
-async function handleWebhookLogic(req, res) {
-    const update = req.body || {};
+async function markPaid(pr, txHash) {
+    const set = { 'withdrawals.$[w].status': 'PAID' };
+    if (txHash) set['withdrawals.$[w].tx'] = txHash;
+    const paidUser = await User.findOneAndUpdate(
+        { id: pr.userId },
+        { $set: set, $inc: { totalWithdrawn: pr.amount } },
+        { arrayFilters: [{ 'w.id': pr.reqId }], new: true }
+    );
+    sendMsg(pr.userId, `✅ Your withdrawal of <b>${fmtU(pr.amount)} USDC</b> has been paid!` +
+        (txHash ? `\n🔗 <a href="https://bscscan.com/tx/${esc(txHash)}">View transaction</a>` : ''));
+
+    // Auto payment proof: channel me username + ID + amount + address post hota hai
+    const uname = paidUser && paidUser.username ? paidUser.username : 'User';
+    sendMsg(PAYMENT_CHANNEL,
+        `✅ <b>New Payment Sent!</b>\n\n` +
+        `👤 User: <b>${esc(uname)}</b>\n` +
+        `🆔 ID: <code>${esc(pr.userId)}</code>\n` +
+        `💰 Amount: <b>${fmtU(pr.amount)} USDC</b> (BEP-20)\n` +
+        `🏦 Address: <code>${esc(pr.address)}</code>\n` +
+        (txHash ? `🔗 <a href="https://bscscan.com/tx/${esc(txHash)}">Transaction</a>\n` : '') +
+        `\n🚀 Earn free USDC with @${BOT_USERNAME}`
+    ).then(r => { if (!r.ok) console.log('Payment channel post failed:', r.description || ''); });
+}
+
+// Payout fail hone par request wapas pending me (agar user ne beech me nayi request na bana li ho), warna refund
+async function restorePending(pr) {
+    try {
+        await PendingRequest.create({ reqId: pr.reqId, userId: pr.userId, amount: pr.amount, address: pr.address });
+        return true;
+    } catch (e) {
+        await User.updateOne(
+            { id: pr.userId },
+            { $set: { 'withdrawals.$[w].status': 'DECLINED' }, $inc: { balance: pr.amount } },
+            { arrayFilters: [{ 'w.id': pr.reqId }] }
+        );
+        sendMsg(pr.userId, `❌ Your withdrawal of <b>${fmtU(pr.amount)} USDC</b> could not be processed and the amount was refunded.`);
+        return false;
+    }
+}
+
+async function resolveWithdraw(reqId, approve) {
+    const pr = await PendingRequest.findOneAndDelete({ reqId: String(reqId) });
+    if (!pr) return { ok: false, message: 'Request already handled / not found' };
+
+    let txHash = null;
+    if (approve) {
+        if (payoutReady()) {
+            try {
+                // ek waqt me ek hi on-chain payment (nonce clash se bachao)
+                const out = await withLock('payout', () => sendUsdc(pr.address, pr.amount));
+                txHash = out.hash;
+            } catch (e) {
+                console.log('Payout failed:', e.message);
+                const restored = await restorePending(pr);
+                return { ok: false, restored, message: 'Payout failed: ' + String(e.shortMessage || e.message).slice(0, 150) };
+            }
+        }
+        await markPaid({ reqId: String(reqId), userId: pr.userId, amount: pr.amount, address: pr.address }, txHash);
+    } else {
+        await User.updateOne(
+            { id: pr.userId },
+            { $set: { 'withdrawals.$[w].status': 'DECLINED' }, $inc: { balance: pr.amount } },
+            { arrayFilters: [{ 'w.id': String(reqId) }] }
+        );
+        sendMsg(pr.userId, `❌ Your withdrawal of <b>${fmtU(pr.amount)} USDC</b> was declined and the amount was refunded.`);
+    }
+    return { ok: true, pr, txHash };
+}
+
+// ---------- TELEGRAM WEBHOOK ----------
+
+app.post('/api/webhook', async (req, res) => {
+    if (req.headers['x-telegram-bot-api-secret-token'] !== WEBHOOK_SECRET) return res.sendStatus(403);
     res.sendStatus(200);
 
     try {
-        if (update.message) {
+        const update = req.body;
+
+        if (update.message && update.message.text !== undefined) {
             const msg = update.message;
             const chatId = String(msg.chat.id);
             const text = msg.text || '';
+            if (msg.chat.type !== 'private') return;
 
-            let user = await User.findOne({ id: chatId });
-            if (user && user.isBanned) {
-                await sendTelegramMessage(chatId, "⚠️ <b>Access Denied:</b> Your account has been banned by the admin.");
-                return;
-            }
+            const known = await User.findOne({ id: chatId });
+            if (known && known.isBanned) return sendMsg(chatId, '⚠️ <b>Access Denied:</b> Your account has been banned.');
 
             if (text.startsWith('/start')) {
-                let referrerId = null;
-                const match = text.match(/\/start\s+(?:ref[_-]?)?(\d+)/i);
-                if (match && match[1]) {
-                    referrerId = String(match[1]).trim();
+                const m = text.match(/^\/start\s+(\d{1,20})$/);
+                let referrer = m ? m[1] : null;
+                if (referrer === chatId) referrer = null;
+                if (referrer && !(await User.exists({ id: referrer }))) referrer = null;
+
+                const name = displayName(msg.from);
+                const user = await User.findOneAndUpdate(
+                    { id: chatId },
+                    { $set: { username: name } },
+                    { upsert: true, new: true, setDefaultsOnInsert: true }
+                );
+                if (referrer && !user.referredBy && !user.isVerified) {
+                    await User.updateOne({ id: chatId, referredBy: null }, { referredBy: referrer });
                 }
 
-                if (!user) {
-                    const okRef = (referrerId && await referrerIsValid(chatId, referrerId)) ? referrerId : null;
-                    user = new User({
-                        id: chatId,
-                        username: msg.from.username ? `@${msg.from.username}` : (msg.from.first_name || 'User'),
-                        referredBy: okRef
-                    });
-                    await user.save();
-                } else {
-                    let currentUsername = msg.from.username ? `@${msg.from.username}` : (msg.from.first_name || 'User');
-                    if (user.username !== currentUsername) {
-                        user.username = currentUsername;
-                        await user.save();
-                    }
-                    if (referrerId && canAttachReferrer(user) && await referrerIsValid(chatId, referrerId)) {
-                        user.referredBy = referrerId;
-                        await user.save();
-                    }
-                }
-
-                if (user.referredBy) {
-                    await registerReferral(user);
-                }
-
-                const welcomeCaption =
-`🎉 <b>Welcome to TRON RICH 🔥!</b>
-
-<i>Mine TRX &amp; Crypto, invite friends and withdraw instantly.</i>
-
-⛏️ Start mining with free power
-🎁 Buy plans &amp; earn daily profit
-👥 Invite friends &amp; earn 3-level commission
-💸 Withdraw straight to your wallet
-
-👇 <b>Join our official channel below!</b>`;
-                const startPhotoUrl = "https://cryptologos.cc/logos/tron-trx-logo.png?v=032";
-
-                const webAppMarkup = {
-                    inline_keyboard: [
-                        [{ text: "📢 Join Official Channel", url: "https://t.me/unitedPay115" }]
-                    ]
-                };
-
-                await sendTelegramPhoto(chatId, startPhotoUrl, welcomeCaption, webAppMarkup);
-
-            } else if (/^\/admin(@\w+)?$/i.test(text.trim())) {
-                const fromId = String((msg.from && msg.from.id) || chatId);
-                if (fromId === ADMIN_ID) {
-                    const baseUrl = String(process.env.RENDER_EXTERNAL_URL || 'https://unitedpay.onrender.com').replace(/\/+$/, '');
-                    await sendTelegramMessage(chatId, `👑 <b>TRON RICH Admin Access</b>\n\nClick below to open the login page:`, {
-                        inline_keyboard: [[{ text: "🔐 Admin Login Panel", url: `${baseUrl}/admin/login` }]]
-                    });
-                } else {
-                    await sendTelegramMessage(chatId, `⛔ <b>Admin only.</b>\nYour Telegram ID: <code>${esc(fromId)}</code>`);
-                }
-            } else if (/^\/myid(@\w+)?$/i.test(text.trim())) {
-                await sendTelegramMessage(chatId, `🆔 Your Telegram ID: <code>${esc((msg.from && msg.from.id) || chatId)}</code>`);
+                // Har channel ka button alag row me (poori width), screenshot ki tarah
+                const kb = [
+                    [{ text: '📢 Official Updates Channel', url: CHANNEL_UPDATES.url }],
+                    [{ text: '💸 Official Payouts Channel', url: CHANNEL_PAYOUTS.url }]
+                ];
+                await sendMsg(chatId, WELCOME_TEXT, { inline_keyboard: kb });
+            } else if (text === '/admin' && chatId === ADMIN_ID) {
+                await sendMsg(chatId, '👑 <b>USDC ONE Admin</b>',
+                    PUBLIC_URL ? { inline_keyboard: [[{ text: '🔐 Admin Login Panel', url: `${PUBLIC_URL}/admin/login` }]] } : undefined);
             }
+
         } else if (update.callback_query) {
-            const query = update.callback_query;
-            const fromId = String(query.from.id);
-            const data = query.data || '';
-            const messageId = query.message ? query.message.message_id : null;
+            const q = update.callback_query;
+            const chatId = String(q.message.chat.id);
+            const data = q.data || '';
 
-            if (data.startsWith('approve_') || data.startsWith('reject_')) {
-                if (fromId !== ADMIN_ID) return answerCallbackQuery(query.id, "Unauthorized!", true);
+            const m = data.match(/^(approve|reject)_(wd_[a-f0-9]+)$/);
+            if (!m) return;
 
-                const isApprove = data.startsWith('approve_');
-                const reqId = data.slice(isApprove ? 'approve_'.length : 'reject_'.length);
+            if (chatId !== ADMIN_ID) return tg('answerCallbackQuery', { callback_query_id: q.id, text: 'Unauthorized!' });
 
-                const result = await processRequest(reqId, isApprove ? 'approve' : 'reject', messageId);
-                return answerCallbackQuery(query.id, result.ok ? (isApprove ? "✅ Approved!" : "❌ Rejected!") : result.message, !result.ok);
-            }
+            const approve = m[1] === 'approve';
+            const r = await resolveWithdraw(m[2], approve);
+            if (!r.ok) return tg('answerCallbackQuery', { callback_query_id: q.id, text: String(r.message || 'Already handled!').slice(0, 190), show_alert: true });
 
-            return answerCallbackQuery(query.id, "");
+            tg('editMessageText', {
+                chat_id: chatId,
+                message_id: q.message.message_id,
+                parse_mode: 'HTML',
+                text: `${approve ? '✅ <b>Approved</b>' : '❌ <b>Rejected</b>'}\nUser ID: ${esc(r.pr.userId)}\nAmount: ${fmtU(r.pr.amount)} USDC`
+            });
+            tg('answerCallbackQuery', { callback_query_id: q.id, text: 'Done!' });
         }
-    } catch (err) {
-        console.log("Webhook error:", err);
+    } catch (e) {
+        console.log('Webhook error:', e);
     }
-}
-
-app.post(`/api/webhook/${BOT_TOKEN}`, handleWebhookLogic);
-app.post('/webhook', handleWebhookLogic);
-app.post('/api/webhook/*', handleWebhookLogic);
-
-app.get('/health', (req, res) => { res.type('text').send('ok'); });
-
-app.get('/', (req, res) => {
-    res.send(`<h1>TRON RICH Mining Backend Active</h1><p>Please launch via Telegram Bot (@FreeTapXBot).</p>`);
 });
 
-// ================== ADMIN PANEL ==================
+// ---------- ADMIN PANEL ----------
+
+const sessions = new Map();
+const attempts = new Map();
+const parseCookies = h => Object.fromEntries(
+    (h || '').split(';').map(c => c.trim().split('=')).filter(p => p[0]).map(p => [p[0], decodeURIComponent(p.slice(1).join('='))])
+);
+const safeEq = (a, b) => {
+    const x = crypto.createHash('sha256').update(String(a)).digest();
+    const y = crypto.createHash('sha256').update(String(b)).digest();
+    return crypto.timingSafeEqual(x, y);
+};
+
+function checkAdmin(req, res, next) {
+    const t = parseCookies(req.headers.cookie).admin_session;
+    if (t && sessions.has(t) && sessions.get(t) > Date.now()) return next();
+    if (req.method === 'GET') return res.redirect('/admin/login');
+    return res.status(401).json({ ok: false, message: 'Not logged in' });
+}
+
 app.get('/admin/login', (req, res) => {
-    res.send(`
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Admin Login - TRON RICH</title>
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <style>
-                * { box-sizing: border-box; font-family: 'Segoe UI', sans-serif; }
-                body { background: #0c0a09; color: #fff; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
-                .login-card { background: #1c1917; border: 1px solid #292524; padding: 30px; border-radius: 16px; width: 90%; max-width: 360px; text-align: center; }
-                h2 { color: #f0b94d; margin-bottom: 20px; }
-                input { width: 100%; padding: 12px; margin-bottom: 12px; background: #0c0a09; border: 1px solid #44403c; color: #fff; border-radius: 8px; }
-                button { width: 100%; padding: 12px; background: #f0b94d; color: #000; font-weight: bold; border: none; border-radius: 8px; cursor: pointer; }
-            </style>
-        </head>
-        <body>
-            <div class="login-card">
-                <h2>🔐 Admin Login</h2>
-                <form action="/admin/login" method="POST">
-                    <input type="text" name="username" placeholder="Username" required>
-                    <input type="password" name="password" placeholder="Password" required>
-                    <button type="submit">Login</button>
-                </form>
-            </div>
-        </body>
-        </html>
-    `);
+    res.send(`<!DOCTYPE html><html><head><title>Admin Login</title><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>*{box-sizing:border-box;font-family:'Segoe UI',sans-serif}body{background:#05080f;color:#fff;display:flex;justify-content:center;align-items:center;height:100vh;margin:0}.c{background:#0c121d;border:1px solid #1d2a40;padding:30px;border-radius:16px;width:90%;max-width:360px;text-align:center}h2{color:#19f5a5}input{width:100%;padding:12px;margin-bottom:12px;background:#05080f;border:1px solid #2a3a55;color:#fff;border-radius:8px}button{width:100%;padding:12px;background:#19f5a5;color:#031410;font-weight:bold;border:none;border-radius:8px;cursor:pointer}</style></head>
+<body><div class="c"><h2>🔐 USDC ONE Admin</h2><form action="/admin/login" method="POST"><input name="username" placeholder="Username" required><input type="password" name="password" placeholder="Password" required><button>Login</button></form></div></body></html>`);
 });
 
 app.post('/admin/login', (req, res) => {
-    const { username, password } = req.body;
-    const ip = req.ip || 'unknown';
-    if (loginBlocked(ip)) {
-        return res.send(`<script>alert('Too many wrong attempts. Try again in 10 minutes.'); window.location.href='/admin/login';</script>`);
-    }
-    if (ADMIN_PASSWORD && username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
-        delete loginFails[ip];
-        const secure = req.secure ? '; Secure' : '';
-        res.setHeader('Set-Cookie', `admin_session=${makeSession()}; Path=/; HttpOnly; Max-Age=86400; SameSite=Lax${secure}`);
+    const ip = req.ip;
+    const a = attempts.get(ip) || { n: 0, t: Date.now() };
+    if (Date.now() - a.t > 15 * 60 * 1000) { a.n = 0; a.t = Date.now(); }
+    if (a.n >= 5) return res.status(429).send('Too many attempts. Try again in 15 minutes.');
+
+    const { username = '', password = '' } = req.body;
+    if (safeEq(username, ADMIN_USERNAME) && safeEq(password, ADMIN_PASSWORD)) {
+        attempts.delete(ip);
+        const token = crypto.randomBytes(32).toString('hex');
+        sessions.set(token, Date.now() + 24 * 3600 * 1000);
+        res.setHeader('Set-Cookie',
+            `admin_session=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=86400${PUBLIC_URL.startsWith('https') ? '; Secure' : ''}`);
         return res.redirect('/admin/dashboard');
     }
-    const f = loginFails[ip] || { count: 0, last: 0 };
-    loginFails[ip] = { count: f.count + 1, last: Date.now() };
-    res.send(`<script>alert('Invalid Credentials!'); window.location.href='/admin/login';</script>`);
+    a.n++;
+    attempts.set(ip, a);
+    res.send(`<script>alert('Invalid Credentials!');location.href='/admin/login'</script>`);
 });
 
 app.get('/admin/logout', (req, res) => {
+    const t = parseCookies(req.headers.cookie).admin_session;
+    if (t) sessions.delete(t);
     res.setHeader('Set-Cookie', 'admin_session=; Path=/; HttpOnly; Max-Age=0');
     res.redirect('/admin/login');
 });
 
-app.get('/admin/dashboard', checkAdminAuth, async (req, res) => {
-    const requests = await PendingRequest.find({});
-    const totalUsers = await User.countDocuments();
-    const allUsers = await User.find({});
-    const liveTrxPrice = await getTrxPrice();
+app.get('/admin/dashboard', checkAdmin, wrap(async (req, res) => {
+    const [totalUsers, verified, pending, agg] = await Promise.all([
+        User.countDocuments(),
+        User.countDocuments({ isVerified: true }),
+        PendingRequest.find({}).sort({ _id: -1 }),
+        User.aggregate([{ $group: { _id: null, bal: { $sum: '$balance' }, paid: { $sum: '$totalWithdrawn' } } }])
+    ]);
+    const s = agg[0] || { bal: 0, paid: 0 };
+    const q = String(req.query.search || '').trim().slice(0, 64);
+    const found = q ? await User.findOne({ $or: [{ id: q }, { username: q.startsWith('@') ? q : '@' + q }] }) : null;
 
-    let totalPaidOut = 0;
-    let totalGlobalDepositUsdt = 0;
-    let activeDepositUsersCount = 0;
-    let activeDepositUsersList = [];
+    const reqRows = pending.map(r => `<tr><td>${esc(r.userId)}</td><td><b>${fmtU(r.amount)} USDC</b></td><td><code>${esc(r.address)}</code></td>
+<td><button class="b g" data-act="req" data-do="approve" data-id="${esc(r.reqId)}">Approve</button> <button class="b r" data-act="req" data-do="reject" data-id="${esc(r.reqId)}">Reject</button></td></tr>`).join('');
 
-    allUsers.forEach(u => {
-        let userActualDepositSum = 0;
-        if (u.deposits) {
-            u.deposits.forEach(d => {
-                if (d.status === 'PAID') {
-                    let depUsdtVal = parseFloat(d.usdtAmount || 1);
-                    userActualDepositSum += depUsdtVal;
-                    totalGlobalDepositUsdt += depUsdtVal;
-                }
-            });
-        }
-
-        if (userActualDepositSum >= 1 && u.planActive !== false) {
-            activeDepositUsersCount++;
-            activeDepositUsersList.push(u);
-        }
-
-        if (u.withdrawals) {
-            u.withdrawals.forEach(w => {
-                if (w.status === 'PAID') totalPaidOut += parseFloat(w.amount || 0);
-            });
-        }
-    });
-
-    let totalGlobalDepositTrx = totalGlobalDepositUsdt / liveTrxPrice;
-
-    let searchId = req.query.search ? String(req.query.search).trim() : '';
-    let searchedUser = null;
-    let userTotalDepositUsdt = 0;
-    let userTotalWithdrawTrx = 0;
-    let userPaidWithdrawCount = 0;
-    let totalRefEarn = 0;
-
-    if (searchId) {
-        const cleanName = searchId.replace('@', '');
-        searchedUser = await User.findOne({
-            $or: [{ id: searchId }, { username: cleanName }, { username: '@' + cleanName }]
-        });
-
-        if (searchedUser) {
-            if (searchedUser.deposits) {
-                searchedUser.deposits.forEach(d => {
-                    if (d.status === 'PAID') {
-                        userTotalDepositUsdt += parseFloat(d.usdtAmount || 1);
-                    }
-                });
-            }
-            if (searchedUser.withdrawals) {
-                searchedUser.withdrawals.forEach(w => {
-                    if (w.status === 'PAID') {
-                        userTotalWithdrawTrx += parseFloat(w.amount || 0);
-                        userPaidWithdrawCount++;
-                    }
-                });
-            }
-            let l1Earn = searchedUser.refEarnings?.level1 || 0;
-            let l2Earn = searchedUser.refEarnings?.level2 || 0;
-            let l3Earn = searchedUser.refEarnings?.level3 || 0;
-            totalRefEarn = l1Earn + l2Earn + l3Earn;
-        }
+    let userBox = '';
+    if (found) {
+        const ts = tapState(found);
+        userBox = `<div class="box">
+<p>👤 <b>${esc(found.username)}</b> | ID: <code>${esc(found.id)}</code></p>
+<p>💰 Balance: <b>${fmtU(found.balance)} USDC</b> | 📤 Total Withdrawn: <b>${fmtU(found.totalWithdrawn)} USDC</b></p>
+<p>✅ Verified: ${found.isVerified ? 'Yes' : 'No'} | 🚫 Banned: ${found.isBanned ? 'Yes' : 'No'} | 👥 Referrals: ${found.referrals.length} | Referred by: ${esc(found.referredBy || 'Direct')}</p>
+<p>👆 Today's lines: ${ts.done} / ${ROUNDS_PER_DAY} | 🏦 Wallet: <code>${esc(found.wallet || 'not linked')}</code></p>
+<div class="row"><input type="number" step="any" id="amt" placeholder="Amount (USDC)">
+<button class="b g" data-act="bal" data-do="add" data-uid="${esc(found.id)}">+ Add</button>
+<button class="b r" data-act="bal" data-do="cut" data-uid="${esc(found.id)}">- Cut</button>
+<button class="b r" data-act="ban" data-do="ban" data-uid="${esc(found.id)}">Ban</button>
+<button class="b g" data-act="ban" data-do="unban" data-uid="${esc(found.id)}">Unban</button>
+<button class="b" data-act="dev" data-uid="${esc(found.id)}">Reset Device</button>
+<button class="b" data-act="wal" data-uid="${esc(found.id)}">Reset Wallet</button></div>
+<div class="row"><input id="smsg" placeholder="Message to this user"><button class="b" data-act="msg" data-uid="${esc(found.id)}">Send</button></div></div>`;
+    } else if (q) {
+        userBox = '<p style="color:#ef4444">User not found!</p>';
     }
 
-    const searchIdJs = JSON.stringify(searchId).replace(/</g, '\\u003c');
+    const payInfo = payoutReady()
+        ? `Auto payout: <b>${AUTO_PAYOUT ? 'ON' : 'OFF'}</b> (max ${fmtU(MAX_AUTO_PAYOUT)} USDC) | Wallet: <code>${esc(payoutWallet.address)}</code>`
+        : 'Auto payout: <b>not configured</b> (manual approve)';
 
-    let html = `
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>TRON RICH Admin Panel</title>
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <style>
-                * { box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
-                body { background: #0c0a09; color: #f3f4f6; margin: 0; padding: 20px; }
-                .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
-                .header h1 { color: #f0b94d; margin: 0; font-size: 24px; }
-                .logout-btn { background: #ef4444; color: #fff; padding: 6px 12px; border-radius: 6px; text-decoration: none; font-size: 12px; font-weight: bold; }
-                .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 20px; }
-                .stat-card { background: #1c1917; border: 1px solid #292524; border-radius: 12px; padding: 15px; text-align: left; }
-                .stat-title { font-size: 11px; color: #a8a29e; text-transform: uppercase; letter-spacing: 0.5px; }
-                .stat-value { font-size: 20px; font-weight: bold; color: #f0b94d; margin-top: 6px; }
-                .nav-tabs { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; background: #1c1917; padding: 10px; border-radius: 12px; border: 1px solid #292524; }
-                .nav-tab { background: #292524; color: #a8a29e; padding: 8px 16px; border-radius: 8px; text-decoration: none; font-size: 13px; font-weight: bold; cursor: pointer; transition: 0.2s; }
-                .nav-tab.active { background: #f0b94d; color: #000; }
-                .tab-content { display: none; }
-                .tab-content.active { display: block; }
-                .card { background: #1c1917; border: 1px solid #292524; border-radius: 12px; padding: 18px; margin-bottom: 20px; overflow-x: auto; }
-                .card h3 { color: #f0b94d; margin-top: 0; font-size: 16px; border-bottom: 1px solid #292524; padding-bottom: 8px; }
-                .search-box { display: flex; gap: 10px; margin-bottom: 15px; }
-                input, textarea { background: #0c0a09; border: 1px solid #44403c; color: #fff; padding: 10px; border-radius: 8px; width: 100%; font-size: 14px; }
-                .btn { background: #f0b94d; color: #000; border: none; font-weight: bold; padding: 10px 18px; border-radius: 8px; cursor: pointer; }
-                .btn-green { background: #22c55e; color: #fff; }
-                .btn-red { background: #ef4444; color: #fff; }
-                .btn-blue { background: #3b82f6; color: #fff; }
-                .btn-gray { background: #6b7280; color: #fff; }
-                table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-                th, td { padding: 10px; text-align: left; border-bottom: 1px solid #292524; font-size: 12px; }
-                th { color: #a8a29e; }
-                code { word-break: break-all; }
-                .user-details-box { background: #0c0a09; padding: 14px; border-radius: 8px; border: 1px solid #292524; margin-top: 10px; font-size: 13px; line-height: 1.8; }
-            </style>
-        </head>
-        <body>
-            <div class="header">
-                <h1>👑 TRON RICH Admin Panel</h1>
-                <div>
-                    <a href="/admin/logout" class="logout-btn">Logout</a>
-                </div>
-            </div>
+    res.send(`<!DOCTYPE html><html><head><title>USDC ONE Admin</title><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>*{box-sizing:border-box;font-family:'Segoe UI',sans-serif}body{background:#05080f;color:#f3f4f6;margin:0;padding:16px}h1{color:#19f5a5;font-size:22px;margin:0}.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
+.lo{background:#ef4444;color:#fff;padding:6px 12px;border-radius:6px;text-decoration:none;font-size:12px;font-weight:bold}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:16px}
+.st{background:#0c121d;border:1px solid #1d2a40;border-radius:12px;padding:14px}.st small{color:#7e8ba3;font-size:11px;text-transform:uppercase}.st div{font-size:19px;font-weight:bold;color:#19f5a5;margin-top:6px}
+.card{background:#0c121d;border:1px solid #1d2a40;border-radius:12px;padding:16px;margin-bottom:16px}.card h3{color:#19f5a5;margin:0 0 10px;font-size:15px}
+input,textarea{background:#05080f;border:1px solid #2a3a55;color:#fff;padding:10px;border-radius:8px;width:100%;font-size:14px}.row{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}.row input{flex:1;min-width:120px}
+.b{background:#19f5a5;color:#031410;border:none;font-weight:bold;padding:9px 14px;border-radius:8px;cursor:pointer}.b.g{background:#22c55e;color:#fff}.b.r{background:#ef4444;color:#fff}
+table{width:100%;border-collapse:collapse}th,td{padding:8px;text-align:left;border-bottom:1px solid #1d2a40;font-size:12px;word-break:break-all}th{color:#7e8ba3}.box{background:#05080f;padding:12px;border-radius:8px;border:1px solid #1d2a40;margin-top:10px;font-size:13px;line-height:1.8}</style></head><body>
+<div class="top"><h1>👑 USDC ONE Admin</h1><a class="lo" href="/admin/logout">Logout</a></div>
+<p style="font-size:12px;color:#7e8ba3;margin-bottom:12px;word-break:break-all">${payInfo}</p>
+<div class="grid">
+<div class="st"><small>Total Users</small><div>${totalUsers}</div></div>
+<div class="st"><small>Verified Users</small><div>${verified}</div></div>
+<div class="st"><small>Users' Balance</small><div>${fmtU(s.bal)} USDC</div></div>
+<div class="st"><small>Paid Out</small><div>${fmtU(s.paid)} USDC</div></div>
+<div class="st"><small>Pending Requests</small><div>${pending.length}</div></div></div>
+<div class="card"><h3>⏳ Pending Withdrawal Requests</h3>${pending.length ? `<table><tr><th>User ID</th><th>Amount</th><th>Wallet (BEP-20)</th><th>Action</th></tr>${reqRows}</table>` : '<p style="color:#7e8ba3;font-size:12px">No pending requests.</p>'}</div>
+<div class="card"><h3>🔍 Search & Manage User</h3><form method="GET" class="row"><input name="search" placeholder="Telegram ID or @username" value="${esc(q)}"><button class="b">Search</button></form>${userBox}</div>
+<div class="card"><h3>📢 Broadcast</h3><textarea id="bc" rows="3" placeholder="Message to all users..."></textarea><button class="b" style="margin-top:10px;width:100%" data-act="bc">Send Broadcast</button></div>
+<script>
+async function post(u,b){const r=await fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});const d=await r.json();alert(d.message||'Done');return d}
+document.addEventListener('click',async e=>{const b=e.target.closest('[data-act]');if(!b)return;const a=b.dataset.act;let d;
+if(a==='req')d=await post('/admin/action',{reqId:b.dataset.id,action:b.dataset.do});
+else if(a==='bal'){const amount=document.getElementById('amt').value;if(!amount)return alert('Enter amount');d=await post('/admin/balance',{userId:b.dataset.uid,amount,action:b.dataset.do})}
+else if(a==='ban')d=await post('/admin/ban',{userId:b.dataset.uid,action:b.dataset.do});
+else if(a==='dev'){if(!confirm('Reset device lock for this user?'))return;d=await post('/admin/resetdevice',{userId:b.dataset.uid})}
+else if(a==='wal'){if(!confirm('Unlink wallet for this user?'))return;d=await post('/admin/resetwallet',{userId:b.dataset.uid})}
+else if(a==='msg'){const message=document.getElementById('smsg').value;if(!message)return;d=await post('/admin/msg',{userId:b.dataset.uid,message})}
+else if(a==='bc'){const message=document.getElementById('bc').value;if(!message)return;if(!confirm('Send to all users?'))return;d=await post('/admin/broadcast',{message})}
+if(a!=='msg'&&a!=='bc')location.reload()});
+</script></body></html>`);
+}));
 
-            <div style="background: #1c1917; border: 1px solid #292524; border-radius: 10px; padding: 10px 15px; margin-bottom: 15px; font-size: 13px; color: #f0b94d; display: flex; justify-content: space-between; align-items: center;">
-                <span>📈 <b>Live TRX Price:</b> $${liveTrxPrice.toFixed(4)} USDT</span>
-                <span style="font-size: 11px; color: #a8a29e;">Auto-updated</span>
-            </div>
-
-            <div class="stats-grid">
-                <div class="stat-card"><div class="stat-title">Total Users</div><div class="stat-value">${totalUsers}</div></div>
-                <div class="stat-card"><div class="stat-title">Total User Deposit</div><div class="stat-value">${totalGlobalDepositUsdt.toFixed(2)} USDT<br><span style="font-size:13px; color:#22c55e;">(${totalGlobalDepositTrx.toFixed(2)} TRX)</span></div></div>
-                <div class="stat-card"><div class="stat-title">Total Active Plan Users ($1+)</div><div class="stat-value">${activeDepositUsersCount} Users</div></div>
-                <div class="stat-card"><div class="stat-title">Paid Out</div><div class="stat-value">${totalPaidOut.toFixed(2)} TRX<br><span style="font-size:13px; color:#38bdf8;">($${(totalPaidOut * liveTrxPrice).toFixed(2)} USDT)</span></div></div>
-                <div class="stat-card"><div class="stat-title">Pending Requests</div><div class="stat-value">${requests.length}</div></div>
-            </div>
-
-            <div class="nav-tabs">
-                <div class="nav-tab active" onclick="switchTab('tab-users', this)">👥 Users & Plans</div>
-                <div class="nav-tab" onclick="switchTab('tab-search', this)">🔍 Search & Manage</div>
-                <div class="nav-tab" onclick="switchTab('tab-requests', this)">⏳ Pending Requests (${requests.length})</div>
-                <div class="nav-tab" onclick="switchTab('tab-broadcast', this)">📢 Broadcast</div>
-            </div>
-
-            <div id="tab-users" class="tab-content active">
-                <div class="card">
-                    <h3>👥 Users With Active Plans ($1+ Deposits Only)</h3>
-                    ${activeDepositUsersList.length === 0 ? `<p style="font-size:12px; color:#a8a29e;">No active plan users found.</p>` : `
-                        <table>
-                            <tr><th>User ID</th><th>Username</th><th>Total Deposit</th><th>GHS Power</th><th>Plan Expiry</th></tr>
-                            ${activeDepositUsersList.map(depUser => {
-                                let depTotalUsdt = 0;
-                                if (depUser.deposits) {
-                                    depUser.deposits.forEach(d => {
-                                        if (d.status === 'PAID') depTotalUsdt += parseFloat(d.usdtAmount || 1);
-                                    });
-                                }
-                                let depTotalTrx = depTotalUsdt / liveTrxPrice;
-                                let displayUname = depUser.username ? (depUser.username.startsWith('@') ? depUser.username : '@' + depUser.username) : '@User';
-                                let planDaysStr = getPlanDaysFormat(depUser);
-                                return `
-                                    <tr>
-                                        <td><code>${esc(depUser.id)}</code></td>
-                                        <td>${esc(displayUname)}</td>
-                                        <td><b style="color:#22c55e;">${depTotalUsdt.toFixed(2)} USDT</b><br><span style="font-size:10px; color:#f0b94d;">(${depTotalTrx.toFixed(2)} TRX)</span></td>
-                                        <td><b>${depUser.ghs} GHS</b></td>
-                                        <td><b style="color:#f0b94d;">${planDaysStr}</b></td>
-                                    </tr>
-                                `;
-                            }).join('')}
-                        </table>
-                    `}
-                </div>
-            </div>
-
-            <div id="tab-search" class="tab-content">
-                <div class="card">
-                    <h3>🔍 Search User Details & Manage Plan</h3>
-                    <form method="GET" action="/admin/dashboard" class="search-box">
-                        <input type="text" name="search" placeholder="Enter Telegram User ID or Username" value="${esc(searchId)}">
-                        <button type="submit" class="btn">Search</button>
-                    </form>
-                    ${searchedUser ? `
-                        <div class="user-details-box">
-                            <p>👤 <b>User Name:</b> ${esc(searchedUser.username.startsWith('@') ? searchedUser.username : '@' + searchedUser.username)} | <b>ID:</b> <code>${esc(searchedUser.id)}</code></p>
-                            <p>💰 <b>Current Balance:</b> <span style="color:#f0b94d; font-weight:bold;">${searchedUser.balance.toFixed(4)} TRX</span> <span style="color:#22c55e;">($${(searchedUser.balance * liveTrxPrice).toFixed(2)} USDT)</span> | ⚡ <b>GHS Power:</b> ${searchedUser.ghs} GHS</p>
-                            <p>🚫 <b>Account Status:</b> ${searchedUser.isBanned ? '<span style="color:#ef4444; font-weight:bold;">BANNED</span>' : '<span style="color:#22c55e; font-weight:bold;">ACTIVE</span>'}</p>
-                            <p>⚡ <b>Mining Plan Status:</b> ${searchedUser.planActive !== false && searchedUser.ghs > 0 ? '<span style="color:#22c55e; font-weight:bold;">ACTIVE (' + getPlanDaysFormat(searchedUser) + ')</span>' : '<span style="color:#ef4444; font-weight:bold;">DEACTIVATED / EXPIRED</span>'}</p>
-                            <p>📥 <b>Total Approved Deposit:</b> <span style="color:#22c55e; font-weight:bold;">${userTotalDepositUsdt.toFixed(2)} USDT</span> <span style="color:#f0b94d;">(${(userTotalDepositUsdt / liveTrxPrice).toFixed(2)} TRX)</span></p>
-                            <p>📤 <b>Total Approved Withdraw:</b> <span style="color:#ef4444; font-weight:bold;">${userTotalWithdrawTrx.toFixed(4)} TRX</span> <span style="color:#f0b94d;">($${(userTotalWithdrawTrx * liveTrxPrice).toFixed(2)} USDT)</span> (<span style="color:#f0b94d;">${userPaidWithdrawCount} Times Paid</span>)</p>
-                            <p>👥 <b>Referrals Count:</b> L1: ${searchedUser.referrals?.level1?.length || 0} | L2: ${searchedUser.referrals?.level2?.length || 0} | L3: ${searchedUser.referrals?.level3?.length || 0}</p>
-                            <p>🎁 <b>Total Referral Commission:</b> <span style="color:#f0b94d; font-weight:bold;">${totalRefEarn.toFixed(4)} TRX</span> <span style="color:#22c55e;">($${(totalRefEarn * liveTrxPrice).toFixed(2)} USDT)</span></p>
-                            <p>🔗 <b>Referred By ID:</b> ${esc(searchedUser.referredBy || 'Direct Join')}</p>
-                            <hr style="border-color:#292524; margin:12px 0;">
-                            <b>⚙️ Manage User Balance, Plan & Status:</b>
-                            <div style="display:flex; gap:10px; margin-top:8px; flex-wrap:wrap;">
-                                <input type="number" id="mod-amt" placeholder="Enter amount" style="flex:1; min-width:140px;">
-                                <button class="btn btn-green" onclick="modifyBal('${esc(searchedUser.id)}', 'add')">+ Add</button>
-                                <button class="btn btn-red" onclick="modifyBal('${esc(searchedUser.id)}', 'cut')">- Cut</button>
-                                <button class="btn btn-blue" onclick="togglePlan('${esc(searchedUser.id)}', 'activate')">⚡ Activate Plan (10 Days)</button>
-                                <button class="btn btn-red" onclick="togglePlan('${esc(searchedUser.id)}', 'deactivate')">❌ Deactivate Plan</button>
-                                <button class="btn btn-red" onclick="toggleBan('${esc(searchedUser.id)}', 'ban')">🚫 Ban User</button>
-                                <button class="btn btn-green" onclick="toggleBan('${esc(searchedUser.id)}', 'unban')">✅ Unban User</button>
-                            </div>
-                            <hr style="border-color:#292524; margin:12px 0;">
-                            <b>✉️ Send Personal Message to this User:</b>
-                            <div style="display:flex; gap:10px; margin-top:8px;">
-                                <input type="text" id="single-msg" placeholder="Type message for this user..." style="flex:1;">
-                                <button class="btn" onclick="sendSingleMsg('${esc(searchedUser.id)}')">Send Msg</button>
-                            </div>
-                        </div>
-                    ` : searchId ? `<p style="color:#ef4444; font-size:12px;">User not found!</p>` : ''}
-                </div>
-            </div>
-
-            <div id="tab-requests" class="tab-content">
-                <div class="card">
-                    <h3>⏳ Pending Requests</h3>
-                    ${requests.length === 0 ? `<p style="font-size:12px; color:#a8a29e;">No pending requests right now.</p>` : `
-                        <table>
-                            <tr><th>Type</th><th>User</th><th>Coin</th><th>Amount (exact)</th><th>Details</th><th>Action</th></tr>
-                            ${requests.map(r => `
-                                <tr>
-                                    <td style="color:${r.type==='deposit'?'#22c55e':'#ef4444'}; font-weight:bold;">${esc(r.type.toUpperCase())}</td>
-                                    <td><code>${esc(r.userId)}</code>${r.username ? '<br>' + esc(r.username) : ''}</td>
-                                    <td>${esc(r.coin || r.coinSymbol || 'TRX')}</td>
-                                    <td><b>${esc(reqAmountLabel(r))}</b>${r.type === 'deposit' ? '<br><span style="color:#a8a29e;">(' + esc(r.usdtAmount) + ' USDT)</span>' : '<br><span style="color:#a8a29e;">($' + Number(r.usdValue || 0).toFixed(2) + ')</span>'}</td>
-                                    <td style="max-width:260px;">${r.type === 'deposit' ? 'Tx: <code>' + esc(r.txHash) + '</code>' : 'Addr: <code>' + esc(r.address) + '</code>'}</td>
-                                    <td style="white-space:nowrap;">
-                                        <button class="btn btn-green" style="padding:4px 8px; font-size:11px;" onclick="handleReq('${esc(r.reqId)}', 'approve')">Approve</button>
-                                        <button class="btn btn-red" style="padding:4px 8px; font-size:11px;" onclick="handleReq('${esc(r.reqId)}', 'reject')">Reject</button>
-                                        <button class="btn btn-gray" style="padding:4px 8px; font-size:11px;" onclick="handleReq('${esc(r.reqId)}', 'close')">Close</button>
-                                    </td>
-                                </tr>
-                            `).join('')}
-                        </table>
-                    `}
-                </div>
-            </div>
-
-            <div id="tab-broadcast" class="tab-content">
-                <div class="card">
-                    <h3>📢 Broadcast Message with Photo to All Users</h3>
-                    <input type="text" id="bc-photo" placeholder="Enter Direct Image URL (Optional)" style="margin-bottom:10px;">
-                    <textarea id="bc-msg" placeholder="Write message to send to all bot users..."></textarea>
-                    <button class="btn" style="margin-top:10px; width:100%;" onclick="sendBroadcast()">Send Broadcast Message</button>
-                </div>
-            </div>
-
-            <script>
-                function switchTab(tabId, el) {
-                    document.querySelectorAll('.tab-content').forEach(tc => tc.classList.remove('active'));
-                    document.querySelectorAll('.nav-tab').forEach(nt => nt.classList.remove('active'));
-                    document.getElementById(tabId).classList.add('active');
-                    el.classList.add('active');
-                }
-
-                if (${searchIdJs} !== '') {
-                    switchTab('tab-search', document.querySelectorAll('.nav-tab')[1]);
-                }
-
-                async function postJson(url, body) {
-                    let res = await fetch(url, {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify(body)
-                    });
-                    return await res.json();
-                }
-                async function handleReq(reqId, action) {
-                    let data = await postJson('/admin/action', { reqId, action });
-                    alert(data.message);
-                    location.reload();
-                }
-                async function modifyBal(userId, action) {
-                    let amount = document.getElementById('mod-amt').value;
-                    if(!amount) return alert("Enter amount!");
-                    let data = await postJson('/admin/manage-balance', { userId, amount, action });
-                    alert(data.message);
-                    location.reload();
-                }
-                async function togglePlan(userId, action) {
-                    let data = await postJson('/admin/manage-plan', { userId, action });
-                    alert(data.message);
-                    location.reload();
-                }
-                async function toggleBan(userId, action) {
-                    let data = await postJson('/admin/ban-user', { userId, action });
-                    alert(data.message);
-                    location.reload();
-                }
-                async function sendSingleMsg(userId) {
-                    let message = document.getElementById('single-msg').value;
-                    if(!message) return alert("Enter message!");
-                    let data = await postJson('/admin/send-single', { userId, message });
-                    alert(data.message);
-                    document.getElementById('single-msg').value = '';
-                }
-                async function sendBroadcast() {
-                    let message = document.getElementById('bc-msg').value;
-                    let photoUrl = document.getElementById('bc-photo').value;
-                    if(!message && !photoUrl) return alert("Please enter message or photo URL!");
-                    let data = await postJson('/admin/broadcast', { message, photoUrl });
-                    alert(data.message);
-                }
-            </script>
-        </body>
-        </html>
-    `;
-    res.send(html);
-});
-
-app.post('/admin/manage-plan', checkAdminAuth, async (req, res) => {
-    const { userId, action } = req.body;
-    let u = await User.findOne({ id: userId });
-    if (!u) return res.status(404).json({ success: false, message: "User not found!" });
-
-    const now = Date.now();
-    settleAccrual(u, now, await getTrxPrice());
-
-    if (action === 'activate') {
-        u.planActive = true;
-        if (u.ghs <= 0) u.ghs = 1;
-        u.planStartDate = now;
-        u.planExpiryDate = now + PLAN_DURATION_MS;
-        await u.save();
-        sendTelegramMessage(userId, `⚡ <b>Plan Activated:</b> Admin has activated your mining plan for 10 Days!`);
-        res.json({ success: true, message: `Plan activated successfully for user ${userId}!` });
-    } else {
-        u.planActive = false;
-        u.ghs = 0;
-        u.planStartDate = 0;
-        u.planExpiryDate = 0;
-        await u.save();
-        sendTelegramMessage(userId, `❌ <b>Plan Expired:</b> Your mining plan has expired. Please renew your plan to keep earning 🚀`);
-        res.json({ success: true, message: `Plan deactivated successfully for user ${userId}!` });
-    }
-});
-
-app.post('/admin/action', checkAdminAuth, async (req, res) => {
+app.post('/admin/action', checkAdmin, wrap(async (req, res) => {
     const { reqId, action } = req.body;
-    if (!['approve', 'reject', 'close'].includes(action)) {
-        return res.status(400).json({ success: false, message: "Invalid action" });
-    }
-    const result = await processRequest(String(reqId), action);
-    res.status(result.ok ? 200 : 404).json({ success: result.ok, message: result.message });
-});
+    if (!['approve', 'reject'].includes(action)) return res.json({ ok: false, message: 'Invalid action' });
+    const r = await resolveWithdraw(reqId, action === 'approve');
+    if (!r.ok) return res.json({ ok: false, message: r.message });
+    res.json({ ok: true, message: `Request ${action}d!` });
+}));
 
-app.post('/admin/manage-balance', checkAdminAuth, async (req, res) => {
-    const { userId, amount, action } = req.body;
-    let u = await User.findOne({ id: userId });
-    if (!u) return res.status(404).json({ success: false, message: "User not found!" });
-
-    let amt = parseFloat(amount);
-    if (!(amt > 0)) return res.status(400).json({ success: false, message: "Invalid amount!" });
-
-    if (action === 'add') {
-        u.balance += amt;
-        sendTelegramMessage(userId, `🎁 Admin added +${amt} TRX to your balance!`);
-    } else {
-        u.balance = Math.max(0, u.balance - amt);
-        sendTelegramMessage(userId, `⚠️ Admin deducted -${amt} TRX from your balance.`);
-    }
-    await u.save();
-    res.json({ success: true, message: `Successfully ${action}ed ${amt} TRX for user ${userId}!` });
-});
-
-app.post('/admin/ban-user', checkAdminAuth, async (req, res) => {
+app.post('/admin/balance', checkAdmin, wrap(async (req, res) => {
     const { userId, action } = req.body;
-    let u = await User.findOne({ id: userId });
-    if (!u) return res.status(404).json({ success: false, message: "User not found!" });
+    const amt = toMicro(req.body.amount);
+    if (!Number.isFinite(amt) || amt <= 0 || amt > 100000 * U) return res.json({ ok: false, message: 'Invalid amount' });
 
-    if (action === 'ban') {
-        u.isBanned = true;
-        await u.save();
-        sendTelegramMessage(userId, `🚫 <b>Account Banned:</b> You have been banned by the admin.`);
-        res.json({ success: true, message: `User ${userId} has been banned successfully!` });
+    let u;
+    if (action === 'add') {
+        u = await User.findOneAndUpdate({ id: String(userId) }, { $inc: { balance: amt } }, { new: true });
     } else {
-        u.isBanned = false;
-        await u.save();
-        sendTelegramMessage(userId, `✅ <b>Account Unbanned:</b> Your account has been unbanned by the admin.`);
-        res.json({ success: true, message: `User ${userId} has been unbanned successfully!` });
+        u = await User.findOneAndUpdate(
+            { id: String(userId), balance: { $gte: amt } },
+            { $inc: { balance: -amt } },
+            { new: true }
+        );
     }
-});
+    if (!u) return res.json({ ok: false, message: 'User not found or balance too low' });
 
-app.post('/admin/send-single', checkAdminAuth, async (req, res) => {
-    const { userId, message } = req.body;
-    let u = await User.findOne({ id: userId });
-    if (!u) return res.status(404).json({ success: false, message: "User not found!" });
+    sendMsg(u.id, action === 'add'
+        ? `🎁 Admin added +${fmtU(amt)} USDC to your balance!`
+        : `⚠️ Admin deducted ${fmtU(amt)} USDC from your balance.`);
+    res.json({ ok: true, message: `Done. New balance: ${fmtU(u.balance)} USDC` });
+}));
 
-    await sendTelegramMessage(userId, `📩 <b>Message from Admin:</b>\n\n${esc(message)}`);
-    res.json({ success: true, message: `Message sent to user ${userId} successfully!` });
-});
+app.post('/admin/ban', checkAdmin, wrap(async (req, res) => {
+    const ban = req.body.action === 'ban';
+    const u = await User.findOneAndUpdate({ id: String(req.body.userId) }, { isBanned: ban }, { new: true });
+    if (!u) return res.json({ ok: false, message: 'User not found' });
+    sendMsg(u.id, ban ? '🚫 <b>Account Banned</b> by admin.' : '✅ <b>Account Unbanned</b> by admin.');
+    res.json({ ok: true, message: ban ? 'User banned' : 'User unbanned' });
+}));
 
-app.post('/admin/broadcast', checkAdminAuth, async (req, res) => {
-    const { message, photoUrl } = req.body;
-    const users = await User.find({});
-    let count = 0;
-    for (let u of users) {
-        if (photoUrl && photoUrl.trim() !== '') {
-            await sendTelegramPhoto(u.id, photoUrl.trim(), esc(message || ''));
-        } else if (message && message.trim() !== '') {
-            await sendTelegramMessage(u.id, esc(message));
-        }
-        count++;
+app.post('/admin/resetdevice', checkAdmin, wrap(async (req, res) => {
+    const r = await Device.deleteMany({ userId: String(req.body.userId) });
+    res.json({ ok: true, message: `Device lock reset (${r.deletedCount} device removed).` });
+}));
+
+app.post('/admin/resetwallet', checkAdmin, wrap(async (req, res) => {
+    const u = await User.findOneAndUpdate({ id: String(req.body.userId) }, { $set: { wallet: null } }, { new: true });
+    if (!u) return res.json({ ok: false, message: 'User not found' });
+    res.json({ ok: true, message: 'Wallet unlinked. User can link a new wallet on next withdraw.' });
+}));
+
+app.post('/admin/msg', checkAdmin, wrap(async (req, res) => {
+    const u = await User.findOne({ id: String(req.body.userId) });
+    if (!u) return res.json({ ok: false, message: 'User not found' });
+    await sendMsg(u.id, `📩 Message from Admin:\n\n${String(req.body.message).slice(0, 3000)}`, undefined, false);
+    res.json({ ok: true, message: 'Message sent!' });
+}));
+
+app.post('/admin/broadcast', checkAdmin, wrap(async (req, res) => {
+    const message = String(req.body.message || '').slice(0, 3500);
+    if (!message.trim()) return res.json({ ok: false, message: 'Empty message' });
+    const ids = (await User.find({ isBanned: false }, { id: 1 })).map(u => u.id);
+    res.json({ ok: true, message: `Broadcast started for ${ids.length} users.` });
+    for (const id of ids) {
+        await sendMsg(id, message, undefined, false);
+        await sleep(60);
     }
-    res.json({ success: true, message: `Broadcast sent to ${count} users successfully!` });
-});
+}));
 
-// ================== MINI APP API ==================
-const teamCache = new Map();
-// registered / active (made a paid deposit) per level + team deposits + team withdrawals, for the Team tab and the invite task
-async function getTeamStats(user) {
-    const hit = teamCache.get(user.id);
-    if (hit && Date.now() - hit.time < 15000) return hit.data;
+// Unknown /api path: HTML ki jagah JSON 404
+app.use('/api', (req, res) => res.status(404).json({ ok: false, error: 'Not found' }));
 
-    const idsByLevel = ['level1', 'level2', 'level3'].map(function (l) {
-        return ((user.referrals && user.referrals[l]) || []).map(function (r) { return String(typeof r === 'string' ? r : r.id); });
-    });
-    const allIds = [].concat.apply([], idsByLevel).slice(0, 3000);
-    const info = {};
-    if (allIds.length) {
-        const docs = await User.find({ id: { $in: allIds } }, 'id deposits withdrawals');
-        docs.forEach(function (d) {
-            let dep = 0, hasDep = false, hasWd = false, wdTrx = 0;
-            (d.deposits || []).forEach(function (x) { if (x.status === 'PAID') { hasDep = true; dep += Number(x.usdtAmount) || 0; } });
-            (d.withdrawals || []).forEach(function (x) {
-                if (x.status === 'PAID') { hasWd = true; wdTrx += parseFloat(x.amount) || 0; }
-            });
-            info[d.id] = { dep: dep, hasDep: hasDep, hasWd: hasWd, wdTrx: wdTrx };
-        });
-    }
-    const out = {
-        registered: [0, 0, 0], active: [0, 0, 0],
-        depositsUsd: 0, firstDeposits: 0, firstWithdrawals: 0,
-        withdrawalsTrx: 0, withdrawalsTrxByLevel: [0, 0, 0]
-    };
-    idsByLevel.forEach(function (ids, i) {
-        ids.forEach(function (id) {
-            out.registered[i]++;
-            const x = info[id];
-            if (!x) return;
-            out.depositsUsd += x.dep;
-            out.withdrawalsTrx += x.wdTrx;
-            out.withdrawalsTrxByLevel[i] += x.wdTrx;
-            if (x.hasDep) { out.active[i]++; out.firstDeposits++; }
-            if (x.hasWd) out.firstWithdrawals++;
-        });
-    });
-    teamCache.set(user.id, { time: Date.now(), data: out });
-    return out;
-}
-
-// ================== HISTORY HELPERS (deposit + withdraw, same clean format) ==================
-// time from ids like "dep_1731398400000_ab12" / "wd_1731398400000_ab12" (used for sorting old records)
-function idTime(id) {
-    const m = String(id || '').match(/^(?:dep|wd)_(\d{10,})_/);
-    return m ? Number(m[1]) : 0;
-}
-
-function normDeposit(d) {
-    const sym = d.coinSymbol || parseCoinSymbol(d.coin || 'TRX');
-    const coinAmt = Number(d.coinAmount) > 0
-        ? Number(d.coinAmount)
-        : (parseFloat(String(d.amount || '').replace(/,/g, '')) || 0);
-    const usdt = Number(d.usdtAmount) || 0;
-    const tx = String(d.txHash || '');
-    return Object.assign({}, d, {
-        type: 'deposit',
-        coinSymbol: sym,
-        coinAmount: coinAmt,
-        usdtAmount: usdt,
-        txHash: tx,
-        txShort: tx.length > 10 ? tx.slice(0, 6) + '...' : tx,
-        status: String(d.status || 'PENDING').toUpperCase(),
-        displayText: coinAmt > 0 ? `${fmtCoin(coinAmt, sym)} ${sym}` : `${usdt} USDT`,
-        usdText: `${usdt.toFixed(2)} USDT`,
-        ts: Number(d.ts) || idTime(d.id) || 0
-    });
-}
-
-function normWithdraw(w) {
-    const sym = w.coinSymbol || 'TRX';
-    const trx = parseFloat(w.amount) || 0;
-    const addr = String(w.address || '');
-    return Object.assign({}, w, {
-        type: 'withdraw',
-        coinSymbol: sym,
-        address: addr,
-        addressShort: addr.length > 10 ? addr.slice(0, 6) + '...' : addr,
-        status: String(w.status || 'PENDING').toUpperCase().replace('PEND1NG', 'PENDING'),
-        displayText: Number(w.coinAmount) > 0
-            ? `${fmtCoin(w.coinAmount, sym)} ${sym}`
-            : `${trx.toFixed(2)} TRX`,
-        usdText: `$${Number(w.usdValue || 0).toFixed(2)}`,
-        ts: Number(w.ts) || idTime(w.id) || 0
-    });
-}
-
-// user's saved history + any request still waiting in PendingRequest (so nothing is ever missing)
-async function buildHistory(data, userId) {
-    const deposits = (data.deposits || []).map(normDeposit);
-    const withdrawals = (data.withdrawals || []).map(normWithdraw);
-    try {
-        const pend = await PendingRequest.find({ userId: String(userId) });
-        pend.forEach(p => {
-            if (p.type === 'deposit' && !deposits.some(x => String(x.id) === p.reqId)) {
-                deposits.push(normDeposit({
-                    id: p.reqId, amount: p.amount, coinAmount: p.coinAmount, coinSymbol: p.coinSymbol,
-                    usdtAmount: p.usdtAmount, coin: p.coin, txHash: p.txHash, status: 'PENDING',
-                    date: new Date().toLocaleDateString('en-US')
-                }));
-            }
-            if (p.type === 'withdraw' && !withdrawals.some(x => String(x.id) === p.reqId)) {
-                withdrawals.push(normWithdraw({
-                    id: p.reqId, amount: p.trxAmount, coinAmount: p.coinAmount, coinSymbol: p.coinSymbol,
-                    usdValue: p.usdValue, address: p.address, status: 'PENDING',
-                    date: new Date().toLocaleDateString('en-US')
-                }));
-            }
-        });
-    } catch (e) { console.log('history merge error:', e.message); }
-    deposits.sort((a, b) => b.ts - a.ts);
-    withdrawals.sort((a, b) => b.ts - a.ts);
-    return { deposits, withdrawals };
-}
-
-app.get('/api/user/:userId', requireTg, async (req, res) => {
-    const userId = req.tgId;
-    let user = await User.findOne({ id: userId });
-
-    if (user && user.isBanned) {
-        return res.status(403).json({ success: false, isBanned: true, message: "Your account is banned by admin." });
-    }
-
-    const now = Date.now();
-
-    if (!user) {
-        user = new User({ id: userId, username: req.tgName });
-        await user.save();
-    } else if (user.planActive && user.planExpiryDate && user.planExpiryDate > 0 && now >= user.planExpiryDate) {
-        expireUserPlan(user, now, await getTrxPrice());
-        await user.save();
-    }
-
-    const refParam = req.query.ref ? String(req.query.ref).replace(/\D/g, '') : '';
-    if (refParam && canAttachReferrer(user) && await referrerIsValid(userId, refParam)) {
-        user.referredBy = refParam;
-        await user.save();
-        await registerReferral(user);
-    }
-
-    const price = await getTrxPrice();
-    // lock what was mined so far into TRX at the current price, so the number the user sees is exactly what he can claim
-    user = await settleAtomic(user, now, price);
-    const data = user.toObject();
-
-    ['level1', 'level2', 'level3'].forEach(lvl => {
-        if (data.referrals && Array.isArray(data.referrals[lvl])) {
-            data.referrals[lvl] = data.referrals[lvl].map(r => {
-                if (typeof r === 'string') {
-                    return { id: r, joinedDate: 'Active', bonusEarned: 0 };
-                }
-                return {
-                    id: r.id || r,
-                    joinedDate: r.joinedDate || 'Active',
-                    bonusEarned: Number(r.bonusEarned || 0)
-                };
-            });
-        }
-    });
-
-    // deposit + withdraw history in the same clean format (includes anything still pending)
-    const hist = await buildHistory(data, userId);
-    data.deposits = hist.deposits;
-    data.withdrawals = hist.withdrawals;
-
-    // team stats + total PAID withdrawals of Level 1+2+3 members (TRX and USD)
-    const teamBase = await getTeamStats(user);
-    data.team = Object.assign({}, teamBase, {
-        totalWithdrawals: teamBase.withdrawalsTrx,                 // TRX
-        withdrawalsUsd: teamBase.withdrawalsTrx * price           // live TRX price se USD
-    });
-
-    // ===== LIVE TRX MINING (value in USD in background, shown in TRX) =====
-    // pendingTrx   = TRX mined and ready to claim right now (the app counter starts from this number)
-    // trxPerSecond = live mining speed in TRX per second (USD speed / live TRX price)
-    // The app should call this endpoint every ~30-60 sec so the speed follows the live TRX price.
-    data.pendingTrx = Number(user.accruedTrx || 0);
-    data.dailyUsd = dailyUsdRate(user, now);
-    data.dailyTrx = data.dailyUsd / price;
-    data.trxPerSecond = data.dailyTrx / 86400;
-    data.paidPlan = isPaidPlanActive(user, now);
-    data.trxPrice = price;
-    data.serverTime = now;
-    res.json(data);
-});
-
-// Deposit + withdraw history only (light call for the Wallet / Mining history lists)
-app.get('/api/history/:userId', requireTg, async (req, res) => {
-    const u = await User.findOne({ id: req.tgId });
-    if (!u) return res.json({ success: true, deposits: [], withdrawals: [] });
-    const hist = await buildHistory(u.toObject(), req.tgId);
-    res.json({ success: true, deposits: hist.deposits, withdrawals: hist.withdrawals });
-});
-
-// ===== LIVE QUOTE: same source the server uses for requests (public, no login needed) =====
-// Deposit:  GET /api/quote?coin=LTC (Litecoin)&usdt=1      -> exact LTC to pay
-// Withdraw: GET /api/quote?coin=LTC (Litecoin)&trx=10      -> exact LTC you will receive
-app.get('/api/quote', async (req, res) => {
-    const sym = parseCoinSymbol(req.query.coin || 'TRX');
-    const price = await getCoinPriceUsd(sym);
-    if (!(price > 0)) return res.status(503).json({ success: false, message: `Live price for ${sym} unavailable` });
-
-    const trxPrice = await getTrxPrice();
-    const out = { success: true, symbol: sym, priceUsd: price, trxPriceUsd: trxPrice };
-
-    const usdt = parseFloat(req.query.usdt);
-    if (usdt > 0) out.coinAmount = roundCoin(usdt / price, sym);
-
-    const trx = parseFloat(req.query.trx);
-    if (trx > 0) {
-        out.usdValue = trx * trxPrice;
-        out.coinAmount = sym === 'TRX' ? trx : roundCoin(out.usdValue / price, sym);
-    }
-    res.json(out);
-});
-
-// Diagnostics: open /api/price-check?coin=SOL to see which price sources answer from this server
-app.get('/api/price-check', async (req, res) => {
-    const sym = parseCoinSymbol(req.query.coin || 'TRX');
-    const r = await fetchAllPrices(sym);
-    res.json({ symbol: sym, price: r.price, sources: r.ok, failed: r.failed });
-});
-
-// Channel task: checks if the user really joined the channel (needs the bot to be an admin of that channel)
-const TASK_CHANNEL = process.env.TASK_CHANNEL || '@unitedPay115';
-app.get('/api/task/channel-status/:userId', requireTg, async (req, res) => {
-    try {
-        const d = await tgCall('getChatMember', { chat_id: TASK_CHANNEL, user_id: Number(req.tgId) });
-        if (d && d.ok && d.result) {
-            const st = d.result.status;
-            const joined = ['creator', 'administrator', 'member'].includes(st) || (st === 'restricted' && d.result.is_member === true);
-            return res.json({ success: true, verified: true, joined });
-        }
-        // bot cannot check (not an admin of the channel, wrong channel name, ...) -> app will trust the user
-        console.log('channel-status not verifiable:', d && d.description);
-        return res.json({ success: true, verified: false, joined: false });
-    } catch (e) {
-        return res.json({ success: true, verified: false, joined: false });
-    }
-});
-
-app.post('/api/update-ghs', requireTg, async (req, res) => {
-    let u = await User.findOne({ id: req.tgId });
-    if (u && u.isBanned) return res.status(403).json({ success: false, isBanned: true, message: "Your account is banned." });
-    res.json({ success: true, ghs: u ? u.ghs : 0 });
-});
-
-// ================== CLAIM (mined TRX is added to the TRX balance) ==================
-app.post('/api/claim', requireTg, async (req, res) => {
-    const userId = req.tgId;
-    const u = await User.findOne({ id: userId });
-    if (!u || u.isBanned) return res.status(400).json({ success: false, message: "User not found or banned" });
-
-    const now = Date.now();
-    const price = await getTrxPrice();
-    const trxAmount = pendingTrxAt(u, now, price);   // locked TRX + whatever was mined since the last refresh
-    if (!(trxAmount > 0)) return res.status(400).json({ success: false, message: "Nothing to collect yet" });
-
-    const updated = await User.findOneAndUpdate(
-        { id: userId, lastClaimTime: u.lastClaimTime },
-        { $inc: { balance: trxAmount }, $set: { accruedTrx: 0, accruedUsd: 0, lastClaimTime: now } },
-        { new: true }
-    );
-    if (!updated) return res.status(409).json({ success: false, message: "Please try again." });
-
-    res.json({
-        success: true,
-        balance: updated.balance,
-        lastClaimTime: updated.lastClaimTime,
-        claimedTrx: trxAmount,
-        trxPrice: price
-    });
-});
-
-// ================== DEPOSIT (coin-wise exact live amount) ==================
-app.post('/api/deposit', requireTg, async (req, res) => {
-    const userId = req.tgId;
-    const { amount, usdtAmount, coin, txHash } = req.body;
-    if (!txHash) {
-        return res.status(400).json({ success: false, message: "Invalid deposit data." });
-    }
-
-    const cleanTxHash = String(txHash).trim();
-    if (cleanTxHash.length < 6 || cleanTxHash.length > 200) {
-        return res.status(400).json({ success: false, message: "Invalid TxHash." });
-    }
-
-    const existingPending = await PendingRequest.findOne({ txHash: cleanTxHash });
-    if (existingPending) {
-        return res.status(400).json({
-            success: false,
-            message: "This TxHash has already been submitted and is currently pending!"
-        });
-    }
-
-    const existingUserHash = await User.findOne({ "deposits.txHash": cleanTxHash });
-    if (existingUserHash) {
-        return res.status(400).json({
-            success: false,
-            message: "This TxHash has already been used! Please provide a new transaction hash."
-        });
-    }
-
-    let u = await User.findOne({ id: userId });
-    if (u && u.isBanned) return res.status(403).json({ success: false, isBanned: true, message: "Your account is banned." });
-    if (!u) u = new User({ id: userId, username: req.tgName });
-
-    if (req.tgName && req.tgName !== 'User') {
-        u.username = req.tgName;
-    }
-
-    const coinRaw = String(coin || 'TRX (TRC-20)').slice(0, 60);
-    const sym = parseCoinSymbol(coinRaw);
-    let exactUsdtVal = Number(usdtAmount) > 0 ? Number(usdtAmount) : 1;
-    if (exactUsdtVal < 1 || exactUsdtVal > 10000) {
-        return res.status(400).json({ success: false, message: "Deposit amount must be between 1 and 10000." });
-    }
-
-    const price = await getCoinPriceUsd(sym);
-    if (!(price > 0)) {
-        return res.status(503).json({ success: false, message: `Live price for ${sym} is unavailable right now. Please try again.` });
-    }
-
-    // exact amount of the chosen coin for this USDT value
-    const liveAmount = roundCoin(exactUsdtVal / price, sym);
-    // if the app already showed the user an amount (within 15% of live), keep that exact number; otherwise use live
-    const clientAmount = parseFloat(String(amount || '').replace(/,/g, ''));
-    const coinAmount = (clientAmount > 0 && Math.abs(clientAmount - liveAmount) / liveAmount <= 0.15)
-        ? roundCoin(clientAmount, sym)
-        : liveAmount;
-    const amountStr = `${fmtCoin(coinAmount, sym)} ${sym}`;
-
-    const reqId = 'dep_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
-
-    u.deposits.unshift({
-        id: reqId,
-        amount: amountStr,
-        coinAmount: coinAmount,
-        coinSymbol: sym,
-        usdtAmount: exactUsdtVal,
-        coin: coinRaw,
-        txHash: cleanTxHash,
-        status: 'PENDING',
-        date: new Date().toLocaleDateString('en-US'),
-        ts: Date.now()
-    });
-    u.markModified('deposits');
-    await u.save();
-
-    const reqDoc = await PendingRequest.create({
-        reqId,
-        type: 'deposit',
-        userId,
-        username: u.username,
-        amount: amountStr,
-        usdtAmount: exactUsdtVal,
-        coin: coinRaw,
-        coinSymbol: sym,
-        coinAmount: coinAmount,
-        price: price,
-        usdValue: exactUsdtVal,
-        txHash: cleanTxHash,
-        status: 'PENDING'
-    });
-
-    await sendRequestToAdmin(reqDoc);
-
-    res.json({ success: true, message: "Deposit request submitted successfully", amount: amountStr, coinAmount, coinSymbol: sym });
-});
-
-// ================== WITHDRAW (coin-wise exact live amount) ==================
-// Body: { address, coin: "LTC (Litecoin)", trxAmount (TRX to deduct)  OR  amount (in chosen coin) }
-app.post('/api/withdraw', requireTg, async (req, res) => {
-    const userId = req.tgId;
-    const { amount, address, trxAmount, coin } = req.body;
-    if (!address || String(address).trim().length < 10 || String(address).trim().length > 120) {
-        return res.status(400).json({ success: false, message: "Invalid withdrawal data" });
-    }
-    const cleanAddress = String(address).trim();
-
-    const coinRaw = String(coin || 'TRX (TRC-20)').slice(0, 60);
-    const sym = parseCoinSymbol(coinRaw);
-
-    const trxPrice = await getTrxPrice();
-    const coinPrice = await getCoinPriceUsd(sym);
-    if (!(coinPrice > 0)) {
-        return res.status(503).json({ success: false, message: `Live price for ${sym} is unavailable right now. Please try again.` });
-    }
-
-    // work out how much TRX balance to deduct
-    let trxAmt;
-    if (parseFloat(trxAmount) > 0) {
-        trxAmt = parseFloat(trxAmount);
-    } else {
-        const typed = parseFloat(amount);
-        if (!(typed > 0)) return res.status(400).json({ success: false, message: "Invalid withdrawal amount" });
-        trxAmt = sym === 'TRX' ? typed : (typed * coinPrice) / trxPrice;   // amount typed in chosen coin
-    }
-    trxAmt = Number(trxAmt.toFixed(8));
-    if (!(trxAmt > 0)) return res.status(400).json({ success: false, message: "Invalid withdrawal amount" });
-    if (trxAmt < MIN_WITHDRAW_TRX) {
-        return res.status(400).json({ success: false, message: `Minimum withdrawal is ${MIN_WITHDRAW_TRX} TRX` });
-    }
-
-    const usdValue = trxAmt * trxPrice;
-    const coinAmount = sym === 'TRX' ? roundCoin(trxAmt, 'TRX') : roundCoin(usdValue / coinPrice, sym);
-    const amountStr = `${fmtCoin(coinAmount, sym)} ${sym}`;
-
-    let u = await User.findOne({ id: userId });
-    if (!u || u.isBanned) {
-        return res.status(403).json({ success: false, message: "Account restricted or banned" });
-    }
-
-    const existingPending = await PendingRequest.findOne({ userId: userId, type: 'withdraw', status: 'PENDING' });
-    if (existingPending) {
-        return res.status(400).json({
-            success: false,
-            message: "You already have a pending withdrawal request. Please wait until it is processed!"
-        });
-    }
-
-    const reqId = 'wd_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
-    const entry = {
-        id: reqId,
-        amount: trxAmt,              // TRX deducted (kept for app compatibility)
-        coin: coinRaw,
-        coinSymbol: sym,
-        coinAmount: coinAmount,      // exact amount admin will pay in chosen coin
-        usdValue: usdValue,
-        address: cleanAddress,
-        status: 'PENDING',
-        date: new Date().toLocaleDateString('en-US'),
-        ts: Date.now()
-    };
-
-    // atomic: deduct balance only if enough balance, and add history in the same step
-    const setFields = {};
-    if (req.tgName && req.tgName !== 'User') setFields.username = req.tgName;
-    const updateDoc = {
-        $inc: { balance: -trxAmt },
-        $push: { withdrawals: { $each: [entry], $position: 0 } }
-    };
-    if (Object.keys(setFields).length) updateDoc.$set = setFields;
-
-    const updated = await User.findOneAndUpdate(
-        { id: userId, isBanned: { $ne: true }, balance: { $gte: trxAmt } },
-        updateDoc,
-        { new: true }
-    );
-    if (!updated) {
-        return res.status(400).json({ success: false, message: "Insufficient balance for withdrawal!" });
-    }
-
-    let reqDoc;
-    try {
-        reqDoc = await PendingRequest.create({
-            reqId,
-            type: 'withdraw',
-            userId,
-            username: updated.username,
-            amount: amountStr,
-            coin: coinRaw,
-            coinSymbol: sym,
-            coinAmount: coinAmount,
-            trxAmount: trxAmt,
-            usdValue: usdValue,
-            price: coinPrice,
-            address: cleanAddress,
-            status: 'PENDING'
-        });
-    } catch (err) {
-        console.log("Pending withdraw create error:", err);
-        await User.updateOne({ id: userId }, { $inc: { balance: trxAmt }, $pull: { withdrawals: { id: reqId } } });
-        return res.status(500).json({ success: false, message: "Could not create request. Try again." });
-    }
-
-    await sendRequestToAdmin(reqDoc);
-
-    res.json({
-        success: true,
-        message: "Withdrawal request submitted successfully",
-        newBalance: updated.balance,
-        amount: amountStr,
-        coinAmount,
-        coinSymbol: sym
-    });
-});
-
-let botUsernameCache = null;
-app.get('/api/bot-info', async (req, res) => {
-    try {
-        if (!botUsernameCache) {
-            const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getMe`);
-            const d = await r.json();
-            if (d && d.ok && d.result && d.result.username) botUsernameCache = d.result.username;
-        }
-        res.json({ success: !!botUsernameCache, username: botUsernameCache });
-    } catch (e) {
-        res.json({ success: false, username: null });
-    }
-});
+// ---------- START ----------
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
     console.log(`Server running on port ${PORT}`);
-    const RENDER_URL = process.env.RENDER_EXTERNAL_URL;
-    if (RENDER_URL && BOT_TOKEN) {
-        try {
-            await tgCall('setWebhook', {
-                url: `${RENDER_URL}/api/webhook/${BOT_TOKEN}`,
-                allowed_updates: ['message', 'callback_query']
-            });
-            console.log("Telegram Webhook Set Successfully!");
-        } catch (e) {
-            console.log("Failed to set webhook:", e);
-        }
+    console.log(payoutReady() ? `💸 Auto payout: ${AUTO_PAYOUT ? 'ON' : 'OFF'} (max ${fmtU(MAX_AUTO_PAYOUT)} USDC)` : '💸 Auto payout: not configured (manual approve)');
+    if (PUBLIC_URL.startsWith('https://')) {
+        const r = await tg('setWebhook', {
+            url: `${PUBLIC_URL}/api/webhook`,
+            secret_token: WEBHOOK_SECRET,
+            allowed_updates: ['message', 'callback_query']
+        });
+        console.log(r.ok ? '✅ Telegram webhook set' : '❌ Webhook failed', r.description || '');
+    } else {
+        console.log('⚠️ PUBLIC_URL (https) not set - webhook not configured.');
     }
 });
