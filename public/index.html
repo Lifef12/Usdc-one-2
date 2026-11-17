@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>USDC ONE - Free USDC</title>
+<title>BabyDoge TapFi - Free BabyDoge</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&display=swap">
@@ -206,7 +206,12 @@ body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;ba
 .st-declined{background:rgba(255,92,122,.14);color:var(--bad);border-radius:99px;padding:4px 6px;text-align:center;font-weight:800;font-size:10px}
 .ref-empty{text-align:center;color:var(--mu);font-size:12px;padding:22px 0}
 
-.wd-bal{text-align:center;font-size:32px;font-weight:800;margin:8px 0 18px}
+.wd-hero{text-align:center;padding:24px 16px}
+.wd-ic{width:62px;height:62px;margin:0 auto 14px;border-radius:50%;background:var(--g1);color:#031410;display:grid;place-items:center;font-size:24px;box-shadow:0 10px 30px rgba(25,245,165,.35)}
+.wd-unit{font-size:15px;font-weight:700;color:var(--or)}
+.wd-title{font-size:20px;font-weight:800;margin-bottom:8px}
+.wd-net{font-size:12px;color:var(--mu);font-weight:500;margin-bottom:14px;line-height:1.5}
+.wd-bal{text-align:center;font-size:40px;font-weight:800;margin:10px 0 4px}
 .wd-bal span{background:var(--g1);-webkit-background-clip:text;background-clip:text;color:transparent}
 .wd-input{display:flex;align-items:center;background:var(--ink);border:1px solid var(--bd);border-radius:14px;margin:8px 0 16px}
 .wd-input i{margin-left:14px;color:var(--or);font-size:16px}
@@ -270,7 +275,7 @@ body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;ba
         <div class="wdm-info">
             <div class="wdm-row"><small>WALLET ADDRESS</small><b id="wdm-addr">-</b></div>
             <div class="wdm-row"><small>WITHDRAWAL AMOUNT</small><b class="amt" id="wdm-amt">-</b></div>
-            <div class="wdm-row"><small>NETWORK</small><span class="wdm-net">USDC • BEP-20 (BSC)</span></div>
+            <div class="wdm-row"><small>NETWORK</small><span class="wdm-net">BabyDoge • BEP-20 (BSC)</span></div>
         </div>
         <div class="wdm-warn">⚠️ Wrong address or network means your funds are lost forever.</div>
         <div class="wdm-btns">
@@ -293,7 +298,7 @@ body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;ba
                 <div class="ax-ring r2"><i></i></div>
                 <div class="ax-ring r3"><i></i></div>
                 <div class="ax-core" id="ax-core">
-                    <img id="ax-logo" alt="USDC ONE" referrerpolicy="no-referrer">
+                    <img id="ax-logo" alt="BabyDoge TapFi" referrerpolicy="no-referrer">
                     <div class="ax-fbbox">
                         <svg viewBox="0 0 100 100">
                             <polygon points="50,12 88,86 12,86" fill="none" stroke="#19f5a5" stroke-width="6" stroke-linejoin="round"/>
@@ -306,7 +311,7 @@ body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;ba
         </div>
 
         <div class="ax-title">
-            <h1>USDC ONE</h1>
+            <h1>BabyDoge TapFi</h1>
             <h2>SECURITY VERIFICATION</h2>
             <p>Please wait while we complete the verification process.</p>
         </div>
@@ -338,7 +343,7 @@ body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;ba
 </div>
 <!-- ============ END STARTUP ANIMATION ============ -->
 
-<div id="ax-loader"><div class="ax-spin"></div><p>Loading USDC ONE...</p></div>
+<div id="ax-loader"><div class="ax-spin"></div><p>Loading BabyDoge TapFi...</p></div>
 
 <div id="blocked-screen">
     <div class="bk-box">
@@ -350,7 +355,7 @@ body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;ba
 </div>
 
 <div id="verification-screen">
-    <div class="verify-logo-box" style="overflow:hidden;padding:0"><img src="https://i.ibb.co/fGHVxxrz/IMG-20261115-110810-842.jpg" alt="USDC ONE" style="width:100%;height:100%;object-fit:cover"></div>
+    <div class="verify-logo-box" style="overflow:hidden;padding:0"><img src="https://i.ibb.co/GQhj6BcW/file-00000000f5788211a63c0b8d93d20ebf.png" alt="BabyDoge TapFi" style="width:100%;height:100%;object-fit:cover"></div>
     <div class="verify-card">
         <h3 style="font-size:26px;font-weight:900;color:#fff;margin-bottom:8px;">Verification Required</h3>
         <p style="font-size:14px;color:#7fe9ff;margin-bottom:20px;">Join all channels, then tap Check again</p>
@@ -383,67 +388,68 @@ body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;ba
   <header class="top">
     <div class="who"><div class="av"><i class="fa-solid fa-user"></i></div>
       <div><h4 id="user-display-name">Free User</h4><span id="user-id-text">ID: -</span></div></div>
-    <div class="brand"><img src="https://i.ibb.co/fGHVxxrz/IMG-20261115-110810-842.jpg" alt="USDC"><b>USDC <em>ONE</em></b></div>
+    <div class="brand"><img src="https://i.ibb.co/GQhj6BcW/file-00000000f5788211a63c0b8d93d20ebf.png" alt="BabyDoge"><b>BabyDoge <em>TapFi</em></b></div>
   </header>
 
   <section id="tab-home" class="tab-content active">
     <div class="hero">
       <span class="k">TOTAL BALANCE</span>
-      <div class="big"><span id="main-balance">0.0000</span><small>USDC</small></div>
-      <div class="live-pill"><i class="dot"></i> Tap to earn • ≈ $<span id="usd-bal">0.00</span></div>
+      <div class="big"><span id="main-balance">0.0000</span><small>BabyDoge</small></div>
+      <div class="live-pill"><i class="dot"></i> Tap to earn BabyDoge</div>
     </div>
 
     <div class="core" id="core">
       <svg class="ring" viewBox="0 0 220 220"><defs><linearGradient id="rg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#19f5a5"/><stop offset="1" stop-color="#31d0ff"/></linearGradient></defs>
         <circle class="trk" cx="110" cy="110" r="98"/><circle class="prg" id="ring-prg" cx="110" cy="110" r="98"/></svg>
-      <button class="coin" id="tap-coin"><img src="https://i.ibb.co/fGHVxxrz/IMG-20261115-110810-842.jpg" alt="USDC ONE" draggable="false"><span class="lock"><i class="fa-solid fa-lock"></i></span></button>
+      <button class="coin" id="tap-coin"><img src="https://i.ibb.co/GQhj6BcW/file-00000000f5788211a63c0b8d93d20ebf.png" alt="BabyDoge TapFi" draggable="false"><span class="lock"><i class="fa-solid fa-lock"></i></span></button>
     </div>
     <div class="tapline" id="tapline">
       <div class="tl-top"><span id="tl-title">TAP LINE</span><b id="tl-count">0 / 30</b></div>
       <div class="tl-bar"><i id="tl-fill"></i></div>
       <div class="tl-sub" id="tl-sub">Tap the coin to fill the line</div>
     </div>
-    <div class="daily"><span>Today's earnings</span><b><span id="day-earned">0.00</span> / 0.50 USDC</b></div>
+    <div class="daily"><span>Today's earnings</span><b><span id="day-earned">0</span> / 10,000,000 BabyDoge</b></div>
 
     <div class="bento">
-      <div class="tile"><i class="fa-solid fa-calendar-day"></i><span>DAILY</span><b>0.5</b></div>
-      <div class="tile"><i class="fa-solid fa-user-plus"></i><span>REFER</span><b>0.3</b></div>
-      <div class="tile"><i class="fa-solid fa-arrow-up-from-bracket"></i><span>MIN WD</span><b>2</b></div>
+      <div class="tile"><i class="fa-solid fa-calendar-day"></i><span>DAILY</span><b>10M</b></div>
+      <div class="tile"><i class="fa-solid fa-user-plus"></i><span>REFER</span><b>20M</b></div>
+      <div class="tile"><i class="fa-solid fa-arrow-up-from-bracket"></i><span>MIN WD</span><b>50M</b></div>
     </div>
     <div class="quick">
-      <button class="btn btn-green" onclick="switchTab('tasks')"><i class="fa-solid fa-gift"></i> Free USDC</button>
+      <button class="btn btn-green" onclick="switchTab('tasks')"><i class="fa-solid fa-gift"></i> Free BabyDoge</button>
       <button class="btn btn-green" onclick="switchTab('withdraw')"><i class="fa-solid fa-wallet"></i> Withdraw</button>
     </div>
   </section>
 
   <section id="tab-tasks" class="tab-content">
     <div class="title-header">Tasks</div>
-    <p class="sub">Complete social tasks and earn <b>0.3 USDC</b> each.</p>
+    <p class="sub">Complete social tasks and earn <b>10M BabyDoge</b> each.</p>
     <div class="card">
       <!-- Task: Join Telegram -->
       <div class="task"><div class="ti tg"><i class="fa-brands fa-telegram"></i></div>
-        <div class="tm"><b>Join Telegram</b><span>+0.3 USDC</span></div>
+        <div class="tm"><b>Join Telegram</b><span>+10M BabyDoge</span></div>
         <button class="btn btn-green" id="task-tg2-btn" onclick="handleTask('tg2','https://t.me/paymentchanneluta')">Start</button></div>
       <!-- Task: YouTube 1 -->
       <div class="task"><div class="ti yt"><i class="fa-brands fa-youtube"></i></div>
-        <div class="tm"><b>YouTube 1</b><span>+0.3 USDC</span><small>Subscribe, submit your task &amp; claim your reward!</small></div>
+        <div class="tm"><b>YouTube 1</b><span>+10M BabyDoge</span><small>Subscribe, submit your task &amp; claim your reward!</small></div>
         <button class="btn btn-green" id="task-yt1-btn" onclick="handleYT('yt1','https://youtube.com/@cryptotech2.1?si=Se0lLUv35lh1wVTn')">Open</button></div>
       <!-- Task: YouTube 2 -->
       <div class="task"><div class="ti yt"><i class="fa-brands fa-youtube"></i></div>
-        <div class="tm"><b>YouTube 2</b><span>+0.3 USDC</span><small>Subscribe, submit your task &amp; claim your reward!</small></div>
+        <div class="tm"><b>YouTube 2</b><span>+10M BabyDoge</span><small>Subscribe, submit your task &amp; claim your reward!</small></div>
         <button class="btn btn-green" id="task-yt2-btn" onclick="handleYT('yt2','https://youtube.com/@noor-e-eman-j4x?si=c2J3wV8q8aTyg1GF')">Open</button></div>
     </div>
   </section>
 
   <section id="tab-earn" class="tab-content">
     <div class="title-header">Referrals</div>
-    <div class="lvl"><i class="fa-solid fa-users"></i><div><span>PER FRIEND</span><b>0.3 USDC</b></div></div>
+    <div class="lvl"><i class="fa-solid fa-users"></i><div><span>PER FRIEND</span><b>20M BabyDoge</b></div></div>
+    <p class="sub" style="margin:-4px 0 16px;">Invite <b>4 friends</b> and earn <b>140M BabyDoge</b> in total. New users get a <b>5M</b> joining bonus!</p>
     <div class="card">
       <span class="card-label">YOUR REFERRAL LINK</span>
       <div class="trx-input-wrapper"><input type="text" id="ref-link" readonly><button class="trx-copy-btn" onclick="copyRefLink()"><i class="fa-solid fa-copy"></i></button></div>
       <button class="btn btn-gold" onclick="shareRefLink()"><i class="fa-solid fa-share-nodes"></i> Share Link</button>
       <div class="ref-line"><span>Total Team Members</span><b id="ref-total">0 Friends</b></div>
-      <div class="ref-line"><span>Referral Bonus Earned</span><b id="ref-bonus" style="color:#19f5a5;">0 USDC</b></div>
+      <div class="ref-line"><span>Referral Bonus Earned</span><b id="ref-bonus" style="color:#19f5a5;">0 BabyDoge</b></div>
     </div>
     <div class="card">
       <span class="card-label" style="margin-bottom:12px;">MY TEAM</span>
@@ -453,23 +459,25 @@ body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;ba
   </section>
 
   <section id="tab-withdraw" class="tab-content">
-    <div class="title-header">Wallet</div>
-    <div class="card">
-      <div class="card-label" style="text-align:center;">AVAILABLE BALANCE</div>
-      <div class="wd-bal"><span id="withdraw-balance">0.0000</span> USDC</div>
-
-      <label class="card-label">WALLET ADDRESS</label>
-      <div class="manual-box">
-        <input type="text" id="manual-addr" placeholder="0x... (BEP-20 wallet address)" autocomplete="off" autocapitalize="off" spellcheck="false">
-      </div>
-      <div class="wd-notice">
-        <b>⚠️ Important:</b> Withdraw only to a wallet address on <b>BNB Smart Chain (BEP-20)</b> and receive <b>USDC only</b>. An address from another network (ERC-20, TRC-20, etc.) will cause your funds to be <b>lost forever</b>. Your first withdrawal address gets locked to your account, so double-check it.
-      </div>
-
-      <div class="wd-row"><label class="card-label">AMOUNT</label><span class="wd-min">Min: 2 USDC</span></div>
-      <div class="wd-input"><i class="fa-solid fa-coins"></i><input type="number" id="withdraw-amount" placeholder="2" min="2" step="0.01" inputmode="decimal"><button type="button" class="max-btn" onclick="setMaxWithdraw()">MAX</button></div>
-      <button class="btn btn-gold" id="wd-btn" onclick="requestWithdraw()">ENTER WALLET ADDRESS</button>
+    <div class="card wd-hero">
+      <div class="wd-ic"><i class="fa-solid fa-wallet"></i></div>
+      <div class="card-label">WITHDRAWABLE BALANCE</div>
+      <div class="wd-bal"><span id="withdraw-balance">0.0000</span></div>
+      <div class="wd-unit">BabyDoge</div>
     </div>
+
+    <div class="card">
+      <div class="wd-title">Withdraw BabyDoge</div>
+      <div class="wd-net">Network: BNB Smart Chain (BEP20) · Minimum 50M BabyDoge</div>
+      <div class="wd-notice">Enter your Baby Doge BEP20 wallet address (Trust Wallet or any supported exchange wallet).</div>
+
+      <div class="wd-input"><i class="fa-solid fa-coins"></i><input type="number" id="withdraw-amount" placeholder="Amount (min 50,000,000)" min="50000000" step="1" inputmode="decimal"><button type="button" class="max-btn" onclick="setMaxWithdraw()">MAX</button></div>
+      <div class="manual-box">
+        <input type="text" id="manual-addr" placeholder="Your BEP20 wallet address (0x...)" autocomplete="off" autocapitalize="off" spellcheck="false">
+      </div>
+      <button class="btn btn-gold" id="wd-btn" onclick="requestWithdraw()"><i class="fa-solid fa-arrow-up-right-from-square"></i> Create Withdrawal Request</button>
+    </div>
+
     <div class="card">
       <span class="card-label" style="margin-bottom:12px;">WITHDRAWAL HISTORY</span>
       <div class="wd-head"><span>Date</span><span>Wallet</span><span>Amount</span><span>Status</span></div>
@@ -492,8 +500,8 @@ if (tg) { try { tg.ready(); tg.expand(); } catch (e) {} }
 const API_BASE = 'https://usdc-one-2.onrender.com';   // Render server
 const BOT_USERNAME = 'FreeTapXBot';
 const COOLDOWN = 24 * 3600 * 1000;
-const DAILY_REWARD = 0.5;      // USDC per day
-const MIN_WITHDRAW = 2;        // USDC
+const DAILY_REWARD = 10000000;   // BabyDoge per day
+const MIN_WITHDRAW = 50000000;  // 50M BabyDoge
 const initData = (tg && tg.initData) || '';
 // ===== SECURITY CONFIG =====
 // ALLOW_PREVIEW = true karne se demo mode (bina Telegram) chalta hai. LIVE bot ke liye hamesha false rakho.
@@ -506,17 +514,18 @@ const TEST_USER_ID = 777777;
 const FORCE_TEST_ID = false;
 const userId = (FORCE_TEST_ID || !(tgUser && tgUser.id)) ? TEST_USER_ID : tgUser.id;
 
-const AX_LOGO = 'https://i.ibb.co/fGHVxxrz/IMG-20261115-110810-842.jpg';
+const AX_LOGO = 'https://i.ibb.co/GQhj6BcW/file-00000000f5788211a63c0b8d93d20ebf.png';
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+const fmt = n => Math.floor(Number(n) || 0).toLocaleString('en-US');
 
 const TASK_BTN = { tg2: 'task-tg2-btn', yt1: 'task-yt1-btn', yt2: 'task-yt2-btn' };
 
 // ===== TAP CONSTANTS (server ke constants se match) =====
 const TAP_TARGET = 30;                       // ek line = 30 taps
 const ROUNDS_PER_DAY = 10;                   // din me 10 lines
-const ROUND_REWARD = 0.05;                   // ek line = 0.05 USDC  (10 x 0.05 = 0.5 / day)
-const TAP_REWARD = ROUND_REWARD / TAP_TARGET; // ~0.001667 USDC per tap
+const ROUND_REWARD = 1000000;                // ek line = 1M BabyDoge (10 x 1M = 10M / day)
+const TAP_REWARD = ROUND_REWARD / TAP_TARGET; // ~0.001667 BabyDoge per tap
 const ROUND_COOLDOWN = 0;                    // line poori hone ke baad koi wait nahi
 const MAX_TPS = 14;                          // insani limit: max taps / second
 const FLUSH_EVERY = 10;
@@ -536,11 +545,11 @@ document.getElementById('ref-link').value = 'https://t.me/' + BOT_USERNAME + '?s
 
 // ===== PREVIEW MODE =====
 const PREVIEW = ALLOW_PREVIEW && !initData;
-const MOCK = { balance: 1.5,
+const MOCK = { balance: 0,
     lineTaps: 0, isVerified: false, tapDone: 0, nextTime: 0, tasks: {}, proof: null,
     referrals: [
-        { id: 123456789, date: Date.now() - 86400000 * 2, bonus: 0.3 },
-        { id: 987654321, date: Date.now() - 86400000, bonus: 0.3 }
+        { id: 123456789, date: Date.now() - 86400000 * 2, bonus: 20000000 },
+        { id: 987654321, date: Date.now() - 86400000, bonus: 20000000 }
     ],
     withdrawals: [] };
 function mockData() {
@@ -566,15 +575,15 @@ async function mockApi(path, body) {
         }
         case '/api/task':
             if (MOCK.tasks[body.taskId]) return bad('Task already claimed');
-            MOCK.tasks[body.taskId] = true; MOCK.balance += 0.3; return ok();
+            MOCK.tasks[body.taskId] = true; MOCK.balance += 10000000; return ok();
         case '/api/yt/submit':
             if (MOCK.tasks[body.taskId]) return bad('Task already claimed');
             MOCK.proof = { task: body.taskId }; return ok();
         case '/api/yt/claim':
             if (!MOCK.proof || MOCK.proof.task !== body.taskId) return bad('Submit the task first');
-            MOCK.tasks[body.taskId] = true; MOCK.proof = null; MOCK.balance += 0.3; return ok();
+            MOCK.tasks[body.taskId] = true; MOCK.proof = null; MOCK.balance += 10000000; return ok();
         case '/api/withdraw':
-            if (!body.amount || body.amount < MIN_WITHDRAW) return bad('Minimum withdrawal is 2 USDC');
+            if (!body.amount || body.amount < MIN_WITHDRAW) return bad('Minimum withdrawal is 50M BabyDoge');
             if (body.amount > MOCK.balance) return bad('Insufficient balance');
             if (!/^0x[a-fA-F0-9]{40}$/.test(body.address || '')) return bad('Invalid wallet');
             MOCK.balance -= body.amount;
@@ -587,7 +596,7 @@ async function mockApi(path, body) {
 async function api(path, body, retries = 0) {
     if (PREVIEW) return mockApi(path, body);
     if (BLOCKED) return { ok: false, error: 'Access blocked: multiple accounts on this device.' };
-    if (!initData) return { ok: false, error: 'Please open this app from the bot using the "Open USDC ONE" button.' };
+    if (!initData) return { ok: false, error: 'Please open this app from the bot using the "Open BabyDoge TapFi" button.' };
     for (let attempt = 0; attempt <= retries; attempt++) {
         const ctrl = new AbortController();
         const timer = setTimeout(() => ctrl.abort(), 20000);
@@ -630,7 +639,7 @@ function setState(d) {
 function renderAll() {
     if (!S) return;
     showBalance();
-    document.getElementById('withdraw-balance').innerText = S.balance.toFixed(4);
+    document.getElementById('withdraw-balance').innerText = fmt(S.balance);
     updateTaskButtons();
     renderReferrals();
     renderHistory();
@@ -684,7 +693,7 @@ async function checkVerification() {
     hideVerify();
     switchTab('home');
     axMarkSeen();
-    showToast('Verification successful!');
+    showToast(r.joinBonus ? 'Verified! Joining bonus +5M BabyDoge added' : 'Verification successful!');
 }
 
 /* =====================================================
@@ -891,7 +900,7 @@ function axRunIntro(apiPromise) {
         finish(2, 'No duplicate account found');
         setProgress(68);
 
-        begin(3, 'Launching USDC ONE...');
+        begin(3, 'Launching BabyDoge TapFi...');
         setProgress(80, 'Launching');
         await sleep(1700);
         finish(3, 'Bot is online');
@@ -934,7 +943,7 @@ function showLock(title, msg, tag) {
 
 // Telegram ke bahar / purani session / fake launch ko roko (server bhi initData ka HMAC check karega)
 function secureGate() {
-    const ID = 'Please open this app from the bot using the "Open USDC ONE" button.';
+    const ID = 'Please open this app from the bot using the "Open BabyDoge TapFi" button.';
     if (!tg || !initData || !tgUser || !tgUser.id) return ['Open from Telegram', ID, 'TELEGRAM ONLY'];
     if (tg.platform === 'unknown') return ['Open from Telegram', ID, 'TELEGRAM ONLY'];
     const ad = Number(tg.initDataUnsafe && tg.initDataUnsafe.auth_date);
@@ -994,14 +1003,14 @@ function copyRefLink() {
 
 function shareRefLink() {
     openLink('https://t.me/share/url?url=' + encodeURIComponent(document.getElementById('ref-link').value) +
-        '&text=' + encodeURIComponent('Get free USDC every day! 💵'));
+        '&text=' + encodeURIComponent('Get free BabyDoge every day! 💵'));
 }
 
 function renderReferrals() {
     const list = (S && S.referrals) || [];
     const total = list.reduce((t, r) => t + Number(r.bonus || 0), 0);
     document.getElementById('ref-total').innerText = list.length + (list.length === 1 ? ' Friend' : ' Friends');
-    document.getElementById('ref-bonus').innerText = (Math.round(total * 100) / 100) + ' USDC';
+    document.getElementById('ref-bonus').innerText = fmt(total) + ' BabyDoge';
 
     const box = document.getElementById('ref-list');
     if (!list.length) {
@@ -1010,12 +1019,12 @@ function renderReferrals() {
     }
     box.innerHTML = list.map(r =>
         '<div class="ref-row"><span>' + String(r.id).replace(/[^0-9]/g, '') + '</span><span>' +
-        new Date(r.date).toLocaleDateString() + '</span><span style="color:#8cf0a8;">+' + Number(r.bonus) +
+        new Date(r.date).toLocaleDateString() + '</span><span style="color:#8cf0a8;">+' + fmt(r.bonus) +
         '</span><span class="ref-ok">✓ Active</span></div>'
     ).join('');
 }
 
-// ===== TAP SYSTEM (har tap par USDC) =====
+// ===== TAP SYSTEM (har tap par BabyDoge) =====
 let pending = 0, inflight = 0, tapBusy = false, flushT = null;
 let tapTimes = [], strikes = 0, tapLockUntil = 0;
 
@@ -1031,7 +1040,7 @@ const fmtLeft = ms => { const t = Math.max(0, Math.ceil(ms / 1000)); return Stri
 function showBalance() {
     if (!S) return;
     const b = S.balance + (inflight + pending) * tapInfo().per;
-    document.getElementById('main-balance').innerText = b.toFixed(4);
+    document.getElementById('main-balance').innerText = fmt(b);
     const ub = document.getElementById('usd-bal'); if (ub) ub.innerText = b.toFixed(2);
 }
 
@@ -1041,7 +1050,7 @@ function tapFx(e, amt) {
     const x = (e && e.clientX != null ? e.clientX : r.left + r.width / 2) - r.left;
     const y = (e && e.clientY != null ? e.clientY : r.top + r.height / 2) - r.top;
     const f = document.createElement('div');
-    f.className = 'fx'; f.textContent = '+' + amt.toFixed(4);
+    f.className = 'fx'; f.textContent = '+' + fmt(amt);
     f.style.left = (x - 24) + 'px'; f.style.top = (y - 20) + 'px';
     core.appendChild(f);
     setTimeout(() => f.remove(), 800);
@@ -1099,7 +1108,7 @@ async function flushTaps() {
         return;
     }
     setState(r.data);
-    if (tapInfo().done > d0) showToast('Line completed! +' + ROUND_REWARD + ' USDC earned');
+    if (tapInfo().done > d0) showToast('Line completed! +' + fmt(ROUND_REWARD) + ' BabyDoge earned');
     if (pending > 0) {
         const t = tapInfo();
         if (pending >= FLUSH_EVERY || lineTotal(t) >= t.target) flushTaps();
@@ -1118,7 +1127,7 @@ function renderTap() {
     const lt = (t.done >= t.max || left > 0) ? 0 : lineTotal(t);
 
     const earned = (t.done * t.target + lt) * t.per;
-    document.getElementById('day-earned').innerText = earned.toFixed(3);
+    document.getElementById('day-earned').innerText = fmt(earned);
     const ring = document.getElementById('ring-prg');
     if (ring) ring.style.strokeDashoffset = (615.75 * (1 - Math.min(1, (t.done * t.target + lt) / (t.max * t.target)))).toFixed(2);
 
@@ -1126,7 +1135,7 @@ function renderTap() {
     if (t.done >= t.max) {
         core.classList.add('locked'); line.classList.add('full');
         title.innerText = 'DAILY LIMIT REACHED'; cnt.innerText = t.max + ' / ' + t.max;
-        fill.style.width = '100%'; sub.innerText = 'You earned the full ' + (t.max * t.target * t.per).toFixed(2) + ' USDC today. Come back tomorrow!';
+        fill.style.width = '100%'; sub.innerText = 'You earned the full ' + fmt(t.max * t.target * t.per) + ' BabyDoge today. Come back tomorrow!';
     } else if (left > 0) {
         core.classList.add('locked'); line.classList.add('cool');
         title.innerText = 'NEXT LINE IN'; cnt.innerText = fmtLeft(left);
@@ -1136,7 +1145,7 @@ function renderTap() {
         core.classList.remove('locked');
         title.innerText = 'TAP LINE'; cnt.innerText = lt + ' / ' + t.target;
         fill.style.width = (100 * lt / t.target).toFixed(1) + '%';
-        sub.innerText = 'Every tap earns +' + t.per.toFixed(4) + ' USDC • line ' + (t.done + 1) + ' of ' + t.max;
+        sub.innerText = 'Every tap earns +' + fmt(t.per) + ' BabyDoge • line ' + (t.done + 1) + ' of ' + t.max;
     }
 }
 function checkMiningTimer() { renderTap(); }
@@ -1199,7 +1208,7 @@ async function handleTask(id, link) {
     busy = false;
     if (!r.ok) { showToast(r.error || 'Error'); return; }
     setState(r.data);
-    showToast('+0.3 USDC claimed!');
+    showToast('+10M BabyDoge claimed!');
 }
 
 async function handleYT(id, link) {
@@ -1225,7 +1234,7 @@ async function handleYT(id, link) {
         }
         taskState[id] = null;
         setState(r.data);
-        showToast('+0.3 USDC claimed!');
+        showToast('+10M BabyDoge claimed!');
         return;
     }
 
@@ -1261,7 +1270,7 @@ function renderHistory() {
         const cls = st === 'PAID' ? 'st-paid' : st === 'DECLINED' ? 'st-declined' : 'st-pending';
         const label = st === 'PAID' ? '✓ PAID' : st === 'DECLINED' ? '✕ DECLINED' : 'PENDING';
         return '<div class="wd-row-item wd-r"><span>' + new Date(i.date).toLocaleDateString() + '</span><span>' +
-            String(i.address).slice(0, 6).replace(/[^0-9a-zA-Z]/g, '') + '...</span><span>-' + Number(i.amount) +
+            String(i.address).slice(0, 6).replace(/[^0-9a-zA-Z]/g, '') + '...</span><span>-' + fmt(i.amount) +
             '</span><span class="' + cls + '">' + label + '</span></div>';
     }).join('');
 }
@@ -1286,7 +1295,7 @@ $id('manual-addr').addEventListener('input', renderWallet);
 renderWallet();
 
 function setMaxWithdraw() {
-    if (S) document.getElementById('withdraw-amount').value = (Math.floor(S.balance * 100) / 100).toFixed(2);
+    if (S) document.getElementById('withdraw-amount').value = String(Math.floor(S.balance));
 }
 
 function switchTab(t) {
@@ -1301,7 +1310,7 @@ function wdConfirm(addr, amt) {
     return new Promise(res => {
         const m = $id('wd-modal'), ok = $id('wdm-ok'), re = $id('wdm-re');
         $id('wdm-addr').textContent = addr;
-        $id('wdm-amt').textContent = amt + ' USDC';
+        $id('wdm-amt').textContent = amt + ' BabyDoge';
         ok.disabled = false;
         m.classList.add('show');
         const done = v => {
@@ -1321,7 +1330,7 @@ async function requestWithdraw() {
     if (!addr) { showToast('Paste your wallet address.'); return; }
     const amt = parseFloat(document.getElementById('withdraw-amount').value);
     if (!amt) { showToast('Enter withdraw amount!'); return; }
-    if (amt < MIN_WITHDRAW) { showToast('Minimum withdrawal is 2 USDC!'); return; }
+    if (amt < MIN_WITHDRAW) { showToast('Minimum withdrawal is 50,000,000 BabyDoge!'); return; }
     if (amt > S.balance) { showToast('Insufficient balance!'); return; }
     if (busy) return;
     if (!PREVIEW) {
