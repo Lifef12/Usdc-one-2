@@ -155,6 +155,7 @@ const UserSchema = new mongoose.Schema({
     balance: { type: Number, default: 0 },            // micro-units (integer)
     isVerified: { type: Boolean, default: false },
     isBanned: { type: Boolean, default: false },
+    deviceOk: { type: Boolean, default: false },      // admin ne allow kiya: fingerprint/IP matching se block nahi hoga
     tasks: {
         tg2: { type: Boolean, default: false },
         yt1: { type: Boolean, default: false },
@@ -210,7 +211,7 @@ const PendingClaim = mongoose.model('PendingClaim', new mongoose.Schema({
 
 // ---------- MULTIPLE ACCOUNT DETECTION (1 device = 1 account) ----------
 const DEVICE_LOCK = true;   // false = detection band
-const FP_LOCK = true;       // phone fingerprint se bhi block. Galat block par admin "Reset Device" use kare.
+const FP_LOCK = true;       // phone fingerprint se bhi block. Galat block par admin "Allow Device" use kare.
 
 const Device = mongoose.model('Device', new mongoose.Schema({
     deviceId: { type: String, required: true, unique: true },
@@ -222,6 +223,8 @@ const Device = mongoose.model('Device', new mongoose.Schema({
     lastSeen: { type: Number, default: Date.now }
 }));
 
+const conflictLogged = new Set();
+
 function normIp(ip) {
     ip = String(ip || '').replace(/^::ffff:/, '');
     if (ip.includes(':')) return ip.split(':').slice(0, 4).join(':');
@@ -229,20 +232,30 @@ function normIp(ip) {
 }
 
 // returns null (ok) | 'conflict' | 'missing'   ("pehla account jeetta hai")
-async function deviceConflict(userId, deviceId, fp, fp2, ip) {
+async function deviceConflict(userId, deviceId, fp, fp2, ip, skipFp) {
     if (!deviceId || deviceId.length < 8 || deviceId.length > 100) return 'missing';
 
     const or = [{ deviceId }];
-    if (FP_LOCK && fp) or.push({ fp });
-    if (FP_LOCK && fp2 && ip) or.push({ fp2, ip });
+    // Fingerprint tabhi match maana jayega jab fp + fp2 + ip TEENO same hon.
+    // (Pehle akela fp, ya fp2+ip match par block hota tha: same model ke phones, same WiFi ya carrier IP par galat block aata tha.)
+    if (FP_LOCK && !skipFp && fp && fp2 && ip) or.push({ fp, fp2, ip });
 
-    const others = await Device.find({ userId: { $ne: userId }, $or: or }, { createdAt: 1 });
+    const others = await Device.find({ userId: { $ne: userId }, $or: or }, { userId: 1, deviceId: 1, createdAt: 1 });
     const mine = await Device.findOne({ deviceId, userId });
 
     if (others.length) {
-        if (!mine) return 'conflict';
         const oldestOther = Math.min(...others.map(o => o.createdAt));
-        if (mine.createdAt >= oldestOther) return 'conflict';
+        if (!mine || mine.createdAt >= oldestOther) {
+            // Admin ke liye log: kis account se kyun match hua (har pair ek hi baar)
+            const first = others.find(o => o.createdAt === oldestOther) || others[0];
+            const lk = userId + '>' + first.userId;
+            if (!conflictLogged.has(lk)) {
+                if (conflictLogged.size > 5000) conflictLogged.clear();
+                conflictLogged.add(lk);
+                console.log(`🚫 Multi-account: user ${userId} blocked, matches older user ${first.userId} (${others.some(o => o.deviceId === deviceId) ? 'same deviceId' : 'same fingerprint + IP'})`);
+            }
+            return 'conflict';
+        }
     }
 
     if (!mine) {
@@ -441,7 +454,8 @@ async function auth(req, res, next) {
                 String(req.headers['x-device-id'] || '').trim(),
                 String(req.headers['x-device-fp'] || '').trim().slice(0, 64),
                 String(req.headers['x-device-fp2'] || '').trim().slice(0, 64),
-                normIp(req.ip)
+                normIp(req.ip),
+                !!user.deviceOk
             );
             if (dev === 'conflict') {
                 return res.status(403).json({ ok: false, code: 'MULTI_ACCOUNT', error: 'Multiple account detected. Only one account per device is allowed.' });
@@ -1173,7 +1187,7 @@ app.get('/admin/dashboard', checkAdmin, wrap(async (req, res) => {
         userBox = `<div class="box">
 <p>👤 <b>${esc(found.username)}</b> | ID: <code>${esc(found.id)}</code></p>
 <p>💰 Balance: <b>${fmtD(found.balance)} ${COIN}</b> | 📤 Total Withdrawn: <b>${fmtD(found.totalWithdrawn)} ${COIN}</b></p>
-<p>✅ Verified: ${found.isVerified ? 'Yes' : 'No'} | 🚫 Banned: ${found.isBanned ? 'Yes' : 'No'} | 👥 Referrals (verified): ${fs.refs} | Referred by: ${esc(found.referredBy || 'Direct')} | Ref credited: ${found.refCredited ? 'Yes' : 'No'}</p>
+<p>✅ Verified: ${found.isVerified ? 'Yes' : 'No'} | 🚫 Banned: ${found.isBanned ? 'Yes' : 'No'} | 👥 Referrals (verified): ${fs.refs} | Referred by: ${esc(found.referredBy || 'Direct')} | Ref credited: ${found.refCredited ? 'Yes' : 'No'} | Device allowed: ${found.deviceOk ? 'Yes' : 'No'}</p>
 <p>👆 Today's lines: ${ts.done} / ${ROUNDS_PER_DAY} | 🏦 Wallet: <code>${esc(found.wallet || 'not linked')}</code></p>
 <div class="row"><input type="number" step="any" id="amt" placeholder="Amount (${COIN})">
 <button class="b g" data-act="bal" data-do="add" data-uid="${esc(found.id)}">+ Add</button>
@@ -1182,6 +1196,7 @@ app.get('/admin/dashboard', checkAdmin, wrap(async (req, res) => {
 <button class="b g" data-act="ban" data-do="unban" data-uid="${esc(found.id)}">Unban</button>
 <button class="b" data-act="dev" data-uid="${esc(found.id)}">Reset Device</button>
 <button class="b" data-act="wal" data-uid="${esc(found.id)}">Reset Wallet</button>
+<button class="b g" data-act="allowdev" data-uid="${esc(found.id)}">Allow Device</button>
 <button class="b g" data-act="cref" data-uid="${esc(found.id)}">Credit Referral</button></div>
 <div class="row"><input id="smsg" placeholder="Message to this user"><button class="b" data-act="msg" data-uid="${esc(found.id)}">Send</button></div></div>`;
     } else if (q) {
@@ -1223,6 +1238,7 @@ else if(a==='dev'){if(!confirm('Reset device lock for this user?'))return;d=awai
 else if(a==='wal'){if(!confirm('Unlink wallet for this user?'))return;d=await post('/admin/resetwallet',{userId:b.dataset.uid})}
 else if(a==='rep'){if(!confirm('Repair all missed referrals?'))return;d=await post('/admin/repairrefs',{})}
 else if(a==='cref'){d=await post('/admin/creditref',{userId:b.dataset.uid})}
+else if(a==='allowdev'){if(!confirm('Allow this user (skip fingerprint/IP matching)?'))return;d=await post('/admin/allowdevice',{userId:b.dataset.uid})}
 else if(a==='msg'){const message=document.getElementById('smsg').value;if(!message)return;d=await post('/admin/msg',{userId:b.dataset.uid,message})}
 else if(a==='bc'){const message=document.getElementById('bc').value;if(!message)return;if(!confirm('Send to all users?'))return;d=await post('/admin/broadcast',{message})}
 if(a!=='msg'&&a!=='bc')location.reload()});
@@ -1277,6 +1293,13 @@ app.post('/admin/resetwallet', checkAdmin, wrap(async (req, res) => {
     const u = await User.findOneAndUpdate({ id: String(req.body.userId) }, { $set: { wallet: null } }, { new: true });
     if (!u) return res.json({ ok: false, message: 'User not found' });
     res.json({ ok: true, message: 'Wallet unlinked. User can link a new wallet on next withdraw.' });
+}));
+
+// Galat 'Multiple account' block hata do: is user par fingerprint/IP matching nahi lagegi (same deviceId wali check phir bhi chalti hai)
+app.post('/admin/allowdevice', checkAdmin, wrap(async (req, res) => {
+    const u = await User.findOneAndUpdate({ id: String(req.body.userId) }, { $set: { deviceOk: true } }, { new: true });
+    if (!u) return res.json({ ok: false, message: 'User not found' });
+    res.json({ ok: true, message: 'Device allowed. User can open the app again.' });
 }));
 
 // Manual: verified user ka pending referral bonus referrer ko abhi de do
