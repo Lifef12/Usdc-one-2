@@ -34,10 +34,11 @@ const fromMicro = m => Math.round(Number(m) || 0) / U;
 const fmtU = m => String(Number((Number(m) / U).toFixed(6)));          // plain number (on-chain ke liye)
 const fmtD = m => (Number(m) / U).toLocaleString('en-US', { maximumFractionDigits: 2 });   // display (commas)
 
-const TASK_REWARD = 5e6 * U;          // 5M BabyDoge per task (3 tasks)
-const REF_BONUS = 10e6 * U;          // 10M BabyDoge per referral
+const TASK_REWARD = 2e6 * U;          // 2M BabyDoge per task (3 tasks)
+const REF_BONUS = 5e6 * U;           // 5M BabyDoge per referral
 const JOIN_BONUS = 1e6 * U;          // 1M BabyDoge joining bonus (pehli baar verify par)
-const MIN_WITHDRAW = 80e6 * U;      // 80M BabyDoge minimum withdraw
+const DAILY_BONUS = 0.5e6 * U;       // 500K BabyDoge daily bonus (din me ek baar, UTC)
+const MIN_WITHDRAW = 50e6 * U;      // 50M BabyDoge minimum withdraw
 const MIN_REFS = 4;                  // withdraw ke liye kam az kam itne VERIFIED referrals zaroori
 
 // ---------- AUTO PAYOUT (Baby Doge BEP-20 / BSC) ----------
@@ -96,10 +97,10 @@ async function sendToken(address, microAmount) {
 
 // ---------- TAP SYSTEM ----------
 // Ek line = TAP_TARGET taps. Line poori hone par seedha nayi line (koi wait nahi). Din me ROUNDS_PER_DAY lines.
-// 10 lines x 0.5M = 5M BabyDoge / din.  (Frontend ke constants se match hona zaroori hai)
+// 10 lines x 1M = 10M BabyDoge / din.  (Frontend ke constants se match hona zaroori hai)
 const TAP_TARGET = 30;
 const ROUNDS_PER_DAY = 10;
-const ROUND_REWARD = 0.5e6 * U;      // 0.5M BabyDoge per line (10 lines = 5M / din)
+const ROUND_REWARD = 1e6 * U;        // 1M BabyDoge per line (10 lines = 10M / din)
 const COOLDOWN = 0;                  // line ke baad koi wait nahi (timer band)
 const MAX_TPS = 14;                  // insani limit: taps / second (server isse zyada credit nahi karta)
 const BOT_USERNAME = 'BabydogeTapfiTg_Bot';
@@ -167,6 +168,8 @@ const UserSchema = new mongoose.Schema({
     tapLine: { type: Number, default: 0 },
     tapNext: { type: Number, default: 0 },
     lastTapAt: { type: Number, default: 0 },
+    // daily bonus (UTC din)
+    dailyDay: { type: String, default: '' },
     // withdraw wallet: pehle withdraw par lock, ek wallet = ek account
     wallet: { type: String, default: null },
     referredBy: { type: String, default: null },
@@ -519,6 +522,7 @@ function publicUser(u, pending) {
             cooldown: COOLDOWN,
             nextTime: t.next
         },
+        daily: { claimed: u.dailyDay === utcDay(), reward: fromMicro(DAILY_BONUS) },
         proof: pending ? { task: pending.task, status: 'ready' } : null,
         referrals: cleanReferrals(u.referrals),
         withdrawals: (Array.isArray(u.withdrawals) ? u.withdrawals : []).slice(0, 50)
@@ -777,6 +781,23 @@ app.post('/api/task', auth, wrap(async (req, res) => {
         { new: true }
     );
     if (!done) return res.json({ ok: false, error: 'Task already claimed.' });
+    res.json({ ok: true, data: await userView(done) });
+}));
+
+// ---------- DAILY BONUS (500K, din me ek baar) ----------
+app.post('/api/daily', auth, wrap(async (req, res) => {
+    const u = req.user;
+    if (!u.isVerified) return res.json({ ok: false, error: 'Please verify channels first.' });
+    const guard = await telegramGuard(u);
+    if (guard) return res.json({ ok: false, error: guard });
+
+    const today = utcDay();
+    const done = await User.findOneAndUpdate(
+        { id: u.id, dailyDay: { $ne: today } },
+        { $set: { dailyDay: today }, $inc: { balance: DAILY_BONUS } },
+        { new: true }
+    );
+    if (!done) return res.json({ ok: false, error: 'Daily bonus already claimed. Come back tomorrow!' });
     res.json({ ok: true, data: await userView(done) });
 }));
 
