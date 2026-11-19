@@ -964,7 +964,7 @@ async function markPaid(pr, txHash) {
         `🆔 ID: <code>${esc(pr.userId)}</code>\n` +
         `💰 Amount: <b>${fmtD(pr.amount)} ${COIN}</b> (BEP-20)\n` +
         `🏦 Address: <code>${esc(pr.address)}</code>\n` +
-        (txHash ? `🔗 <a href="https://bscscan.com/tx/${esc(txHash)}">Transaction</a>\n` : '') +
+        (txHash ? `🧾 BSC Hash: <code>${esc(txHash)}</code>\n🔗 <a href="https://bscscan.com/tx/${esc(txHash)}">View on BscScan</a>\n` : '') +
         `\n🚀 Earn free ${COIN} with @${BOT_USERNAME}`
     ).then(r => { if (!r.ok) console.log('Payment channel post failed:', r.description || ''); });
 }
