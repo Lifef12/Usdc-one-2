@@ -35,7 +35,7 @@ const fmtU = m => String(Number((Number(m) / U).toFixed(6)));          // plain 
 const fmtD = m => (Number(m) / U).toLocaleString('en-US', { maximumFractionDigits: 2 });   // display (commas)
 
 const TASK_REWARD = 5e6 * U;          // 5M BabyDoge per task (3 tasks)
-const REF_BONUS = 20e6 * U;          // 20M BabyDoge per referral
+const REF_BONUS = 10e6 * U;          // 10M BabyDoge per referral
 const JOIN_BONUS = 1e6 * U;          // 1M BabyDoge joining bonus (pehli baar verify par)
 const MIN_WITHDRAW = 80e6 * U;      // 80M BabyDoge minimum withdraw
 const MIN_REFS = 4;                  // withdraw ke liye kam az kam itne VERIFIED referrals zaroori
