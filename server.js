@@ -3,10 +3,6 @@ const mongoose = require('mongoose');
 const crypto = require('crypto');
 const path = require('path');
 
-// ethers sirf auto-payout ke liye chahiye. Install: npm i ethers
-let ethers = null;
-try { ethers = require('ethers'); } catch (e) { console.log('ℹ️ ethers not installed - auto payout disabled (run: npm i ethers)'); }
-
 const app = express();
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
@@ -38,59 +34,8 @@ const TASK_REWARD = 2e6 * U;          // 2M BabyDoge per task (3 tasks)
 const REF_BONUS = 5e6 * U;           // 5M BabyDoge per referral
 const JOIN_BONUS = 1e6 * U;          // 1M BabyDoge joining bonus (pehli baar verify par)
 const DAILY_BONUS = 0.5e6 * U;       // 500K BabyDoge daily bonus (din me ek baar, UTC)
-const MIN_WITHDRAW = 50e6 * U;      // 50M BabyDoge minimum withdraw
+const MIN_WITHDRAW = 80e6 * U;      // 80M BabyDoge minimum withdraw
 const MIN_REFS = 4;                  // withdraw ke liye kam az kam itne VERIFIED referrals zaroori
-
-// ---------- AUTO PAYOUT (Baby Doge BEP-20 / BSC) ----------
-// FLOW: user withdraw kare -> request admin ke paas aaye -> admin Approve dabaye -> tab BabyDoge on-chain apne aap send ho.
-// Render env me set karo:
-//   PAYOUT_PRIVATE_KEY = payout wallet ki private key (sirf env me, kabhi code me nahi). Is wallet me BabyDoge + thora BNB (gas) rakho.
-//   BSC_RPC            = (optional) default https://bsc-dataseed.binance.org/
-// Key na ho to Approve sirf status PAID kar deta hai (payment admin khud bhejega).
-const PAYOUT_PRIVATE_KEY = (process.env.PAYOUT_PRIVATE_KEY || '').trim();
-const BSC_RPC = process.env.BSC_RPC || 'https://bsc-dataseed.binance.org/';
-const TOKEN_BSC = '0xc748673057861a797275CD8A068AbB95A902e8de';   // Baby Doge Coin (BEP-20), 9 decimals
-const TOKEN_DECIMALS = 9;
-const MIN_GAS_BNB = '0.0005';
-
-let payoutWallet = null, tokenContract = null, payoutProvider = null;
-if (ethers && PAYOUT_PRIVATE_KEY) {
-    try {
-        payoutProvider = new ethers.JsonRpcProvider(BSC_RPC, 56, { staticNetwork: ethers.Network.from(56) });
-        payoutWallet = new ethers.Wallet(PAYOUT_PRIVATE_KEY, payoutProvider);
-        tokenContract = new ethers.Contract(TOKEN_BSC, [
-            'function transfer(address to, uint256 amount) returns (bool)',
-            'function balanceOf(address) view returns (uint256)'
-        ], payoutWallet);
-        console.log('✅ Payout wallet ready:', payoutWallet.address);
-    } catch (e) {
-        console.error('❌ Invalid PAYOUT_PRIVATE_KEY:', e.message);
-        payoutWallet = null; tokenContract = null;
-    }
-}
-const payoutReady = () => !!(payoutWallet && tokenContract);
-
-// BabyDoge on-chain bhejo. Success par { hash }, fail par error throw (paise nahi gaye).
-async function sendToken(address, microAmount) {
-    if (!payoutReady()) throw new Error('Payout wallet not configured');
-    if (!/^0x[a-fA-F0-9]{40}$/.test(address)) throw new Error('Invalid address');
-    const units = ethers.parseUnits(fmtU(microAmount), TOKEN_DECIMALS);
-
-    const bal = await tokenContract.balanceOf(payoutWallet.address);
-    if (bal < units) throw new Error('Payout wallet has not enough ' + COIN);
-    const gas = await payoutProvider.getBalance(payoutWallet.address);
-    if (gas < ethers.parseEther(MIN_GAS_BNB)) throw new Error('Payout wallet needs BNB for gas');
-
-    const tx = await tokenContract.transfer(address, units);
-    try {
-        const rc = await tx.wait(1, 90000);
-        if (rc && rc.status === 0) throw new Error('REVERTED');
-    } catch (e) {
-        if (String(e.message) === 'REVERTED') throw new Error('Transaction reverted on-chain');
-        // timeout: tx bhej di gayi hai, confirm hone me der. Paid maan lo.
-    }
-    return { hash: tx.hash };
-}
 
 // ---------- TAP SYSTEM ----------
 // Ek line = TAP_TARGET taps. Line poori hone par seedha nayi line (koi wait nahi). Din me ROUNDS_PER_DAY lines.
@@ -969,40 +914,13 @@ async function markPaid(pr, txHash) {
     ).then(r => { if (!r.ok) console.log('Payment channel post failed:', r.description || ''); });
 }
 
-// Payout fail hone par request wapas pending me (agar user ne beech me nayi request na bana li ho), warna refund
-async function restorePending(pr) {
-    try {
-        await PendingRequest.create({ reqId: pr.reqId, userId: pr.userId, amount: pr.amount, address: pr.address });
-        return true;
-    } catch (e) {
-        await User.updateOne(
-            { id: pr.userId },
-            { $set: { 'withdrawals.$[w].status': 'DECLINED' }, $inc: { balance: pr.amount } },
-            { arrayFilters: [{ 'w.id': pr.reqId }] }
-        );
-        sendMsg(pr.userId, `❌ Your withdrawal of <b>${fmtD(pr.amount)} ${COIN}</b> could not be processed and the amount was refunded.`);
-        return false;
-    }
-}
-
 async function resolveWithdraw(reqId, approve) {
     const pr = await PendingRequest.findOneAndDelete({ reqId: String(reqId) });
     if (!pr) return { ok: false, message: 'Request already handled / not found' };
 
-    let txHash = null;
     if (approve) {
-        if (payoutReady()) {
-            try {
-                // ek waqt me ek hi on-chain payment (nonce clash se bachao)
-                const out = await withLock('payout', () => sendToken(pr.address, pr.amount));
-                txHash = out.hash;
-            } catch (e) {
-                console.log('Payout failed:', e.message);
-                const restored = await restorePending(pr);
-                return { ok: false, restored, message: 'Payout failed: ' + String(e.shortMessage || e.message).slice(0, 150) };
-            }
-        }
-        await markPaid({ reqId: String(reqId), userId: pr.userId, amount: pr.amount, address: pr.address }, txHash);
+        // Manual system: admin pehle khud payment bhejta hai, phir Approve dabata hai (status PAID ho jata hai)
+        await markPaid({ reqId: String(reqId), userId: pr.userId, amount: pr.amount, address: pr.address }, null);
     } else {
         await User.updateOne(
             { id: pr.userId },
@@ -1011,7 +929,7 @@ async function resolveWithdraw(reqId, approve) {
         );
         sendMsg(pr.userId, `❌ Your withdrawal of <b>${fmtD(pr.amount)} ${COIN}</b> was declined and the amount was refunded.`);
     }
-    return { ok: true, pr, txHash };
+    return { ok: true, pr };
 }
 
 // ---------- TELEGRAM WEBHOOK ----------
@@ -1091,8 +1009,7 @@ app.post('/api/webhook', async (req, res) => {
                 chat_id: chatId,
                 message_id: q.message.message_id,
                 parse_mode: 'HTML',
-                text: `${approve ? '✅ <b>Approved & Sent</b>' : '❌ <b>Rejected</b>'}\nUser ID: ${esc(r.pr.userId)}\nAmount: ${fmtD(r.pr.amount)} ${COIN}` +
-                    (approve && r.txHash ? `\n🔗 https://bscscan.com/tx/${esc(r.txHash)}` : '')
+                text: `${approve ? '✅ <b>Approved</b>' : '❌ <b>Rejected</b>'}\nUser ID: ${esc(r.pr.userId)}\nAmount: ${fmtD(r.pr.amount)} ${COIN}`
             });
             tg('answerCallbackQuery', { callback_query_id: q.id, text: 'Done!' });
         }
@@ -1261,9 +1178,7 @@ app.get('/admin/dashboard', checkAdmin, wrap(async (req, res) => {
         userBox = '<p style="color:#ef4444">User not found!</p>';
     }
 
-    const payInfo = payoutReady()
-        ? `Send on Approve: <b>ON</b> | Payout wallet: <code>${esc(payoutWallet.address)}</code>`
-        : 'Send on Approve: <b>not configured</b> (Approve only marks PAID, send manually)';
+    const payInfo = 'Withdrawals: <b>Manual</b> (pehle payment bhejo, phir Approve dabao)';
 
     res.send(`<!DOCTYPE html><html><head><title>BabyDoge TapFi Admin</title><meta name="viewport" content="width=device-width, initial-scale=1.0">
 <style>*{box-sizing:border-box;font-family:'Segoe UI',sans-serif}body{background:#05080f;color:#f3f4f6;margin:0;padding:16px}h1{color:#19f5a5;font-size:22px;margin:0}.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
@@ -1408,7 +1323,6 @@ app.use('/api', (req, res) => res.status(404).json({ ok: false, error: 'Not foun
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
     console.log(`Server running on port ${PORT}`);
-    console.log(payoutReady() ? '💸 Send on Approve: ON' : '💸 Send on Approve: not configured (Approve only marks PAID)');
     if (PUBLIC_URL.startsWith('https://')) {
         const r = await tg('setWebhook', {
             url: `${PUBLIC_URL}/api/webhook`,
