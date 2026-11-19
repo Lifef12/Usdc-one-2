@@ -42,18 +42,15 @@ const MIN_WITHDRAW = 50e6 * U;      // 50M BabyDoge minimum withdraw
 const MIN_REFS = 4;                  // withdraw ke liye kam az kam itne VERIFIED referrals zaroori
 
 // ---------- AUTO PAYOUT (Baby Doge BEP-20 / BSC) ----------
+// FLOW: user withdraw kare -> request admin ke paas aaye -> admin Approve dabaye -> tab BabyDoge on-chain apne aap send ho.
 // Render env me set karo:
 //   PAYOUT_PRIVATE_KEY = payout wallet ki private key (sirf env me, kabhi code me nahi). Is wallet me BabyDoge + thora BNB (gas) rakho.
 //   BSC_RPC            = (optional) default https://bsc-dataseed.binance.org/
-//   AUTO_PAYOUT        = 'false' likho to auto band (admin approve karega). Default: key ho to ON.
-//   MAX_AUTO_PAYOUT    = (optional) is amount (BabyDoge) se bade withdraw admin approval par jayenge. Default 100,000,000.
-// Key na ho to manual approve system chalta hai.
+// Key na ho to Approve sirf status PAID kar deta hai (payment admin khud bhejega).
 const PAYOUT_PRIVATE_KEY = (process.env.PAYOUT_PRIVATE_KEY || '').trim();
 const BSC_RPC = process.env.BSC_RPC || 'https://bsc-dataseed.binance.org/';
 const TOKEN_BSC = '0xc748673057861a797275CD8A068AbB95A902e8de';   // Baby Doge Coin (BEP-20), 9 decimals
 const TOKEN_DECIMALS = 9;
-const AUTO_PAYOUT = process.env.AUTO_PAYOUT !== 'false';
-const MAX_AUTO_PAYOUT = toMicro(process.env.MAX_AUTO_PAYOUT || 100000000);
 const MIN_GAS_BNB = '0.0005';
 
 let payoutWallet = null, tokenContract = null, payoutProvider = null;
@@ -941,34 +938,10 @@ app.post('/api/withdraw', auth, wrap(async (req, res) => {
 
     const view = await userView(upd);
 
-    // AUTO PAYOUT
-    if (AUTO_PAYOUT && payoutReady() && amt <= MAX_AUTO_PAYOUT) {
-        res.json({ ok: true, data: view });
-        autoPayout(reqId, u.id, amt, address).catch(e => console.log('autoPayout error:', e));
-        return;
-    }
-
-    // MANUAL: admin approve karega
+    // Request hamesha admin ke paas jati hai. Payment tab hoti hai jab admin Approve dabaye.
     res.json({ ok: true, data: view });
     notifyAdminRequest(reqId, u, amt, address).catch(e => console.log('notifyAdminRequest error:', e.message));
 }));
-
-async function autoPayout(reqId, userId, amt, address) {
-    const r = await resolveWithdraw(reqId, true);
-    let st = '';
-    try { st = '\n' + statsLine(await userStats(userId)); } catch (e) { console.log('userStats error:', e.message); }
-    if (r.ok) {
-        sendMsg(ADMIN_ID, `🤖 <b>Auto payout sent</b>\n\n👤 User ID: <code>${esc(userId)}</code>\n💰 ${fmtD(amt)} ${COIN} (BEP-20)\n🏦 <code>${esc(address)}</code>` +
-            (r.txHash ? `\n🔗 https://bscscan.com/tx/${esc(r.txHash)}` : '') + st);
-    } else {
-        sendMsg(ADMIN_ID,
-            `⚠️ <b>Auto payout failed</b>\n\n👤 User ID: <code>${esc(userId)}</code>\n💰 ${fmtD(amt)} ${COIN} (BEP-20)\n🏦 <code>${esc(address)}</code>` + st +
-            `\n\nReason: ${esc(r.message || 'unknown')}` +
-            (r.restored ? '\n\nRequest is pending. Fix the issue and approve manually, or reject to refund.' : ''),
-            r.restored ? adminButtons(reqId) : undefined
-        );
-    }
-}
 
 // ---------- WITHDRAW RESOLVE ----------
 
@@ -1118,7 +1091,8 @@ app.post('/api/webhook', async (req, res) => {
                 chat_id: chatId,
                 message_id: q.message.message_id,
                 parse_mode: 'HTML',
-                text: `${approve ? '✅ <b>Approved</b>' : '❌ <b>Rejected</b>'}\nUser ID: ${esc(r.pr.userId)}\nAmount: ${fmtD(r.pr.amount)} ${COIN}`
+                text: `${approve ? '✅ <b>Approved & Sent</b>' : '❌ <b>Rejected</b>'}\nUser ID: ${esc(r.pr.userId)}\nAmount: ${fmtD(r.pr.amount)} ${COIN}` +
+                    (approve && r.txHash ? `\n🔗 https://bscscan.com/tx/${esc(r.txHash)}` : '')
             });
             tg('answerCallbackQuery', { callback_query_id: q.id, text: 'Done!' });
         }
@@ -1140,6 +1114,50 @@ const safeEq = (a, b) => {
     return crypto.timingSafeEqual(x, y);
 };
 
+// ---------- ADMIN 2FA (TOTP: Google Authenticator / Authy / Microsoft Authenticator) ----------
+// Render env: ADMIN_TOTP_SECRET = base32 secret. Set na ho to 2FA band (admin panel ke 2FA Setup page se secret milega).
+const B32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+function b32decode(str) {
+    let bits = '';
+    for (const c of str) { const i = B32.indexOf(c); if (i < 0) return null; bits += i.toString(2).padStart(5, '0'); }
+    const bytes = [];
+    for (let i = 0; i + 8 <= bits.length; i += 8) bytes.push(parseInt(bits.slice(i, i + 8), 2));
+    return Buffer.from(bytes);
+}
+function b32encode(buf) {
+    let bits = '', out = '';
+    for (const b of buf) bits += b.toString(2).padStart(8, '0');
+    for (let i = 0; i < bits.length; i += 5) out += B32[parseInt(bits.slice(i, i + 5).padEnd(5, '0'), 2)];
+    return out;
+}
+function totpAt(key, step) {
+    const buf = Buffer.alloc(8);
+    buf.writeBigUInt64BE(BigInt(step));
+    const h = crypto.createHmac('sha1', key).update(buf).digest();
+    const o = h[h.length - 1] & 15;
+    const n = ((h[o] & 0x7f) << 24) | (h[o + 1] << 16) | (h[o + 2] << 8) | h[o + 3];
+    return String(n % 1000000).padStart(6, '0');
+}
+const ADMIN_TOTP_SECRET = (process.env.ADMIN_TOTP_SECRET || '').replace(/[\s=-]/g, '').toUpperCase();
+if (ADMIN_TOTP_SECRET && !(b32decode(ADMIN_TOTP_SECRET) || []).length) {
+    console.error('❌ ADMIN_TOTP_SECRET invalid (base32 A-Z, 2-7 hona chahiye).');
+    process.exit(1);
+}
+const TOTP_ON = !!ADMIN_TOTP_SECRET;
+const setupSecret = b32encode(crypto.randomBytes(20));   // sirf setup page ke liye (2FA on nahi ho to)
+let lastTotpStep = 0;                                     // ek code dobara use nahi ho sakta
+function verifyTotp(secret, code) {
+    const key = b32decode(secret);
+    code = String(code || '').replace(/\s/g, '');
+    if (!key || !key.length || !/^\d{6}$/.test(code)) return false;
+    const cur = Math.floor(Date.now() / 30000);
+    for (let d = -1; d <= 1; d++) {
+        const st = cur + d;
+        if (st > lastTotpStep && safeEq(totpAt(key, st), code)) { lastTotpStep = st; return true; }
+    }
+    return false;
+}
+
 function checkAdmin(req, res, next) {
     const t = parseCookies(req.headers.cookie).admin_session;
     if (t && sessions.has(t) && sessions.get(t) > Date.now()) return next();
@@ -1150,7 +1168,7 @@ function checkAdmin(req, res, next) {
 app.get('/admin/login', (req, res) => {
     res.send(`<!DOCTYPE html><html><head><title>Admin Login</title><meta name="viewport" content="width=device-width, initial-scale=1.0">
 <style>*{box-sizing:border-box;font-family:'Segoe UI',sans-serif}body{background:#05080f;color:#fff;display:flex;justify-content:center;align-items:center;height:100vh;margin:0}.c{background:#0c121d;border:1px solid #1d2a40;padding:30px;border-radius:16px;width:90%;max-width:360px;text-align:center}h2{color:#19f5a5}input{width:100%;padding:12px;margin-bottom:12px;background:#05080f;border:1px solid #2a3a55;color:#fff;border-radius:8px}button{width:100%;padding:12px;background:#19f5a5;color:#031410;font-weight:bold;border:none;border-radius:8px;cursor:pointer}</style></head>
-<body><div class="c"><h2>🔐 BabyDoge TapFi Admin</h2><form action="/admin/login" method="POST"><input name="username" placeholder="Username" required><input type="password" name="password" placeholder="Password" required><button>Login</button></form></div></body></html>`);
+<body><div class="c"><h2>🔐 BabyDoge TapFi Admin</h2><form action="/admin/login" method="POST"><input name="username" placeholder="Username" required><input type="password" name="password" placeholder="Password" required>${TOTP_ON ? '<input name="code" placeholder="2FA Code (6 digits)" inputmode="numeric" autocomplete="one-time-code" maxlength="8" required>' : ''}<button>Login</button></form></div></body></html>`);
 });
 
 app.post('/admin/login', (req, res) => {
@@ -1159,8 +1177,10 @@ app.post('/admin/login', (req, res) => {
     if (Date.now() - a.t > 15 * 60 * 1000) { a.n = 0; a.t = Date.now(); }
     if (a.n >= 5) return res.status(429).send('Too many attempts. Try again in 15 minutes.');
 
-    const { username = '', password = '' } = req.body;
-    if (safeEq(username, ADMIN_USERNAME) && safeEq(password, ADMIN_PASSWORD)) {
+    const { username = '', password = '', code = '' } = req.body;
+    const passOk = safeEq(username, ADMIN_USERNAME) & safeEq(password, ADMIN_PASSWORD);   // dono hamesha check hote hain
+    const codeOk = !TOTP_ON || verifyTotp(ADMIN_TOTP_SECRET, code);
+    if (passOk && codeOk) {
         attempts.delete(ip);
         const token = crypto.randomBytes(32).toString('hex');
         sessions.set(token, Date.now() + 24 * 3600 * 1000);
@@ -1171,6 +1191,23 @@ app.post('/admin/login', (req, res) => {
     a.n++;
     attempts.set(ip, a);
     res.send(`<script>alert('Invalid Credentials!');location.href='/admin/login'</script>`);
+});
+
+app.get('/admin/2fa-setup', checkAdmin, (req, res) => {
+    const label = encodeURIComponent('BabyDoge TapFi Admin');
+    const uri = `otpauth://totp/${label}?secret=${setupSecret}&issuer=${label}&digits=6&period=30`;
+    const body = TOTP_ON
+        ? `<h2>✅ 2FA is ON</h2><p>Login par ab password ke saath authenticator ka 6-digit code lagta hai.</p>`
+        : `<h2>🔐 2FA Setup</h2>
+<p><b>Step 1:</b> Google Authenticator / Authy me "Enter setup key" chuno aur ye key daalo (Time based):</p>
+<p><code style="font-size:16px;word-break:break-all">${setupSecret}</code></p>
+<p>Ya phone par ye link tap karo: <a href="${uri}">Open in Authenticator</a></p>
+<p><b>Step 2:</b> Render → Environment me variable banao:<br><code>ADMIN_TOTP_SECRET</code> = <code>${setupSecret}</code></p>
+<p><b>Step 3:</b> Redeploy karo. Uske baad login par 2FA code maanga jayega.</p>
+<p style="color:#f59e0b">Dhyan: Step 2 karne se pehle ye page band na karo, nahi to key badal jayegi (server restart par nayi key banti hai). Env set hone ke baad ye key dobara nahi dikhegi.</p>`;
+    res.send(`<!DOCTYPE html><html><head><title>2FA Setup</title><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>body{background:#05080f;color:#f3f4f6;font-family:'Segoe UI',sans-serif;padding:20px;line-height:1.6}h2{color:#19f5a5}code{background:#0c121d;padding:3px 6px;border-radius:6px;color:#19f5a5}a{color:#19f5a5}</style></head>
+<body>${body}<p><a href="/admin/dashboard">← Back to dashboard</a></p></body></html>`);
 });
 
 app.get('/admin/logout', (req, res) => {
@@ -1225,8 +1262,8 @@ app.get('/admin/dashboard', checkAdmin, wrap(async (req, res) => {
     }
 
     const payInfo = payoutReady()
-        ? `Auto payout: <b>${AUTO_PAYOUT ? 'ON' : 'OFF'}</b> (max ${fmtD(MAX_AUTO_PAYOUT)} ${COIN}) | Wallet: <code>${esc(payoutWallet.address)}</code>`
-        : 'Auto payout: <b>not configured</b> (manual approve)';
+        ? `Send on Approve: <b>ON</b> | Payout wallet: <code>${esc(payoutWallet.address)}</code>`
+        : 'Send on Approve: <b>not configured</b> (Approve only marks PAID, send manually)';
 
     res.send(`<!DOCTYPE html><html><head><title>BabyDoge TapFi Admin</title><meta name="viewport" content="width=device-width, initial-scale=1.0">
 <style>*{box-sizing:border-box;font-family:'Segoe UI',sans-serif}body{background:#05080f;color:#f3f4f6;margin:0;padding:16px}h1{color:#19f5a5;font-size:22px;margin:0}.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
@@ -1237,6 +1274,7 @@ input,textarea{background:#05080f;border:1px solid #2a3a55;color:#fff;padding:10
 .b{background:#19f5a5;color:#031410;border:none;font-weight:bold;padding:9px 14px;border-radius:8px;cursor:pointer}.b.g{background:#22c55e;color:#fff}.b.r{background:#ef4444;color:#fff}
 table{width:100%;border-collapse:collapse}th,td{padding:8px;text-align:left;border-bottom:1px solid #1d2a40;font-size:12px;word-break:break-all}th{color:#7e8ba3}.box{background:#05080f;padding:12px;border-radius:8px;border:1px solid #1d2a40;margin-top:10px;font-size:13px;line-height:1.8}</style></head><body>
 <div class="top"><h1>👑 BabyDoge TapFi Admin</h1><a class="lo" href="/admin/logout">Logout</a></div>
+<p style="font-size:12px;margin-bottom:6px">${TOTP_ON ? '🔒 2FA: <b>ON</b>' : '⚠️ 2FA: <b style="color:#f59e0b">OFF</b> - <a href="/admin/2fa-setup" style="color:#19f5a5">Enable now</a>'}</p>
 <p style="font-size:12px;color:#7e8ba3;margin-bottom:6px;word-break:break-all">${payInfo}</p>
 <p style="font-size:12px;color:#7e8ba3;margin-bottom:12px;word-break:break-all">Webhook: <code>${esc(wh.url || 'NOT SET')}</code> | Pending: ${esc(wh.pending_update_count || 0)}${wh.last_error_message ? ' | <span style="color:#ef4444">Last error: ' + esc(wh.last_error_message) + '</span>' : ''} | Server: ${esc(PUBLIC_URL || 'PUBLIC_URL not set')}</p>
 <div class="grid">
@@ -1370,7 +1408,7 @@ app.use('/api', (req, res) => res.status(404).json({ ok: false, error: 'Not foun
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
     console.log(`Server running on port ${PORT}`);
-    console.log(payoutReady() ? `💸 Auto payout: ${AUTO_PAYOUT ? 'ON' : 'OFF'} (max ${fmtD(MAX_AUTO_PAYOUT)} ${COIN})` : '💸 Auto payout: not configured (manual approve)');
+    console.log(payoutReady() ? '💸 Send on Approve: ON' : '💸 Send on Approve: not configured (Approve only marks PAID)');
     if (PUBLIC_URL.startsWith('https://')) {
         const r = await tg('setWebhook', {
             url: `${PUBLIC_URL}/api/webhook`,
