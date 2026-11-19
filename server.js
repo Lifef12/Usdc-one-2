@@ -32,17 +32,17 @@ const fmtD = m => (Number(m) / U).toLocaleString('en-US', { maximumFractionDigit
 
 const TASK_REWARD = 2e6 * U;          // 2M BabyDoge per task (3 tasks)
 const REF_BONUS = 5e6 * U;           // 5M BabyDoge per referral
-const JOIN_BONUS = 1e6 * U;          // 1M BabyDoge joining bonus (pehli baar verify par)
+const JOIN_BONUS = 0.5e6 * U;        // 500K BabyDoge joining bonus (pehli baar verify par)
 const DAILY_BONUS = 0.5e6 * U;       // 500K BabyDoge daily bonus (din me ek baar, UTC)
 const MIN_WITHDRAW = 80e6 * U;      // 80M BabyDoge minimum withdraw
 const MIN_REFS = 4;                  // withdraw ke liye kam az kam itne VERIFIED referrals zaroori
 
 // ---------- TAP SYSTEM ----------
 // Ek line = TAP_TARGET taps. Line poori hone par seedha nayi line (koi wait nahi). Din me ROUNDS_PER_DAY lines.
-// 10 lines x 1M = 10M BabyDoge / din.  (Frontend ke constants se match hona zaroori hai)
+// 10 lines x 0.1M = 1M BabyDoge / din.  (Frontend ke constants se match hona zaroori hai)
 const TAP_TARGET = 30;
 const ROUNDS_PER_DAY = 10;
-const ROUND_REWARD = 1e6 * U;        // 1M BabyDoge per line (10 lines = 10M / din)
+const ROUND_REWARD = 0.1e6 * U;      // 100K BabyDoge per line (10 lines = 1M / din)
 const COOLDOWN = 0;                  // line ke baad koi wait nahi (timer band)
 const MAX_TPS = 14;                  // insani limit: taps / second (server isse zyada credit nahi karta)
 const BOT_USERNAME = 'BabydogeTapfiTg_Bot';
