@@ -1,6 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+<!-- Monetag SDK (Telegram Mini App ads) -->
+<script src='//libtl.com/sdk.js' data-zone='12348157' data-sdk='show_12348157'></script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>BabyDoge TapFi - Free BabyDoge</title>
@@ -471,6 +473,21 @@ input:focus{background:#fffbe0}
   <a class="nav-item" id="nav-withdraw" onclick="switchTab('withdraw')"><i class="fa-solid fa-sack-dollar"></i><span>Cash</span></a>
 </div></nav>
 
+<script>
+/* ================= MONETAG ADS ================= */
+function showRewardedAd(){return new Promise(res=>{try{
+  if(typeof show_12348157!=='function')return res(false);
+  show_12348157().then(()=>res(true)).catch(()=>res(false));
+}catch(e){res(false)}})}
+// Automatic popup ad on tab switch (max 1 per 2 minutes, not during first 30s)
+let lastAutoAd=Date.now()-90000;
+function autoAd(){const n=Date.now();if(n-lastAutoAd<120000||typeof show_12348157!=='function')return;lastAutoAd=n;
+  try{const p=show_12348157('pop');if(p&&p.catch)p.catch(()=>{})}catch(e){}}
+// In-app interstitial: automatic ads (3 ads / 6 min, 30s apart, first after 5s)
+window.addEventListener('load',()=>{try{
+  if(typeof show_12348157==='function')show_12348157({type:'inApp',inAppSettings:{frequency:3,capping:0.1,interval:30,timeout:5,everyPage:false}});
+}catch(e){}});
+</script>
 <script>
 const tg = window.Telegram && window.Telegram.WebApp;
 if (tg) { try { tg.ready(); tg.expand(); } catch (e) {} }
@@ -1219,6 +1236,7 @@ async function handleTask(id, link) {
         return;
     }
     busy = true;
+    await showRewardedAd();
     const r = await api('/api/task', { taskId: id });
     busy = false;
     if (!r.ok) { showToast(r.error || 'Error'); return; }
@@ -1240,6 +1258,7 @@ async function handleYT(id, link) {
 
     if (pending === id) {
         busy = true;
+        await showRewardedAd();
         const r = await api('/api/yt/claim', { taskId: id });
         busy = false;
         if (!r.ok) {
@@ -1321,6 +1340,7 @@ function switchTab(t) {
     document.getElementById('nav-' + t).classList.add('active');
     window.scrollTo(0, 0);
     if (t === 'earn' || t === 'withdraw') refreshMe();
+    autoAd();
 }
 
 // Server se latest data lao (tap/busy ho to skip, taake koi tap na kho jaye)
@@ -1387,4 +1407,4 @@ async function requestWithdraw() {
 startApp();
 </script>
 </body>
-</html>
+                                                                    </html>
