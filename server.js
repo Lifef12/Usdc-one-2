@@ -35,6 +35,12 @@ const REF_BONUS = 5e6 * U;           // 5M BabyDoge per referral
 const JOIN_BONUS = 0.5e6 * U;        // 500K BabyDoge joining bonus (pehli baar verify par)
 const DAILY_BONUS = 0.5e6 * U;       // 500K BabyDoge daily bonus (din me ek baar, UTC)
 const MIN_WITHDRAW = 80e6 * U;      // 80M BabyDoge minimum withdraw
+// ---------- WATCH ADS (Monetag rewarded) ----------
+// Reward is credited by the SERVER only after: start -> (ad is shown) -> claim, with a one-time token.
+const AD_REWARD = 50 * U;            // coins per ad (change here)
+const AD_COOLDOWN_MS = 30 * 1000;    // minimum gap between two rewarded ads per user
+const AD_MIN_WATCH_MS = 5 * 1000;    // claim before this = ad was skipped / fake
+const AD_TOKEN_TTL_MS = 10 * 60 * 1000;
 const MIN_REFS = 4;                  // withdraw ke liye kam az kam itne VERIFIED referrals zaroori
 
 // ---------- TAP SYSTEM ----------
@@ -120,6 +126,10 @@ const UserSchema = new mongoose.Schema({
     refMilestone: { type: Boolean, default: false },
     referrals: { type: Array, default: [] },
     totalWithdrawn: { type: Number, default: 0 },     // micro-units
+    adTok: { type: String, default: '' },
+    adTokAt: { type: Number, default: 0 },
+    adLastClaim: { type: Number, default: 0 },
+    adsWatched: { type: Number, default: 0 },
     withdrawals: { type: Array, default: [] },
     createdAt: { type: Number, default: Date.now }
 });
@@ -724,6 +734,43 @@ app.post('/api/task', auth, wrap(async (req, res) => {
     );
     if (!done) return res.json({ ok: false, error: 'Task already claimed.' });
     res.json({ ok: true, data: await userView(done) });
+}));
+
+// ---------- WATCH ADS: start / claim ----------
+app.post('/api/ad/start', auth, wrap(async (req, res) => {
+    const u = req.user;
+    if (!u.isVerified) return res.json({ ok: false, error: 'Please verify channels first.' });
+    const guard = await telegramGuard(u);
+    if (guard) return res.json({ ok: false, error: guard });
+
+    const now = Date.now();
+    const wait = (u.adLastClaim || 0) + AD_COOLDOWN_MS - now;
+    if (wait > 0) return res.json({ ok: false, error: 'Please wait ' + Math.ceil(wait / 1000) + 's for the next ad.' });
+
+    const tok = crypto.randomBytes(16).toString('hex');
+    await User.updateOne({ id: u.id }, { $set: { adTok: tok, adTokAt: now } });
+    res.json({ ok: true, token: tok, reward: AD_REWARD / U });
+}));
+
+app.post('/api/ad/claim', auth, wrap(async (req, res) => {
+    const u = req.user;
+    const tok = String(req.body.token || '');
+    if (!tok) return res.json({ ok: false, error: 'Invalid ad session.' });
+    const guard = await telegramGuard(u);
+    if (guard) return res.json({ ok: false, error: guard });
+
+    const now = Date.now();
+    const done = await User.findOneAndUpdate(
+        {
+            id: u.id, adTok: tok,
+            adTokAt: { $lte: now - AD_MIN_WATCH_MS, $gte: now - AD_TOKEN_TTL_MS },
+            adLastClaim: { $lte: now - AD_COOLDOWN_MS }
+        },
+        { $set: { adTok: '', adLastClaim: now }, $inc: { balance: AD_REWARD, adsWatched: 1 } },
+        { new: true }
+    );
+    if (!done) return res.json({ ok: false, error: 'Ad was not completed. Please try again.' });
+    res.json({ ok: true, data: await userView(done), reward: AD_REWARD / U });
 }));
 
 // ---------- DAILY BONUS (500K, din me ek baar) ----------
