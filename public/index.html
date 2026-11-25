@@ -108,7 +108,7 @@ a{color:inherit}
 .chip{background:var(--w);border:var(--bd);border-radius:99px;padding:5px 14px;font-size:14px;font-weight:700;text-align:right;line-height:1.2;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .chip span{display:block;font-weight:500;color:var(--mu);font-size:11px}
 .bottom-nav{position:fixed;left:0;right:0;bottom:0;z-index:999999;display:flex;justify-content:center;padding:0 14px calc(10px + env(safe-area-inset-bottom));pointer-events:none}
-.bottom-nav div{pointer-events:auto;width:100%;max-width:532px;display:grid;grid-template-columns:repeat(4,1fr);gap:4px;background:var(--w);border:var(--bd);border-radius:22px;box-shadow:0 4px 0 var(--ink);padding:5px}
+.bottom-nav div{pointer-events:auto;width:100%;max-width:532px;display:grid;grid-template-columns:repeat(5,1fr);gap:3px;background:var(--w);border:var(--bd);border-radius:22px;box-shadow:0 4px 0 var(--ink);padding:5px}
 .nav-item{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;color:var(--mu);font-weight:700;font-size:12px;letter-spacing:.3px;padding:8px 0 7px;border-radius:16px;cursor:pointer;transition:background .15s,color .15s,transform .1s}
 .nav-item i{font-size:19px;line-height:1}
 .nav-item:active{transform:scale(.94)}
@@ -238,6 +238,14 @@ input:focus{background:#fffbe0}
 .bk-box span{display:inline-block;margin-top:18px;padding:3px 16px;border-radius:99px;border:var(--bd);background:var(--w);font-size:12px;font-weight:800;letter-spacing:2px}
 @media (min-width:700px){.app{padding-top:28px}.bottom-nav div{max-width:572px}}
 @media (max-height:640px){.core{width:150px;margin-bottom:12px}.rounds{margin-top:8px}}
+
+.seg{display:flex;gap:8px;background:var(--w);border:var(--bd);border-radius:14px;padding:5px;box-shadow:var(--sh)}
+.seg button{flex:1;border:0;background:transparent;border-radius:10px;padding:10px 6px;font-weight:800;font-size:14px;color:var(--mu);cursor:pointer;font-family:inherit}
+.seg button.on{background:var(--y);color:var(--ink);border:var(--bd)}
+.ad-ic{font-size:44px;color:var(--ink);margin-bottom:6px}
+.ad-reward{font-size:26px;font-weight:900;color:var(--ink)}
+.ad-note{font-size:12px;color:var(--mu);margin-bottom:14px;font-weight:700}
+.ad-stat{margin-top:12px;font-size:12px;color:var(--mu);font-weight:700}
 </style>
 </head>
 <body>
@@ -400,7 +408,12 @@ input:focus{background:#fffbe0}
   </section>
 
   <section id="tab-tasks" class="tab-content">
-    <div class="title-header">Quick tasks</div>
+    <div class="title-header">Earn</div>
+    <div class="seg">
+      <button class="on" id="seg-tasks" onclick="switchEarnSeg('tasks')"><i class="fa-solid fa-list-check"></i> Tasks</button>
+      <button id="seg-ads" onclick="switchEarnSeg('ads')"><i class="fa-solid fa-circle-play"></i> Watch Ads</button>
+    </div>
+    <div id="panel-tasks">
     <p class="sub">Complete social tasks and earn <b>10M BabyDoge</b> each.</p>
     <div class="card">
       <!-- Task: Join Telegram -->
@@ -415,6 +428,18 @@ input:focus{background:#fffbe0}
       <div class="task"><div class="ti yt"><i class="fa-brands fa-youtube"></i></div>
         <div class="tm"><b>YouTube 2</b><span>+10M BabyDoge</span><small>Subscribe, submit your task &amp; claim your reward!</small></div>
         <button class="btn btn-green" id="task-yt2-btn" onclick="handleYT('yt2','https://youtube.com/@noor-e-eman-j4x?si=c2J3wV8q8aTyg1GF')">Open</button></div>
+    </div>
+    </div>
+
+    <div id="panel-ads" style="display:none">
+      <p class="sub">Watch a short ad and earn <b>+5,000 BabyDoge</b> every time. <b>Unlimited</b> ads every day!</p>
+      <div class="card" style="text-align:center">
+        <div class="ad-ic"><i class="fa-solid fa-circle-play"></i></div>
+        <div class="ad-reward">+5,000 BabyDoge</div>
+        <div class="ad-note">per ad watched</div>
+        <button class="btn btn-gold" id="watch-ad-btn" onclick="watchAd()"><i class="fa-solid fa-play"></i> Watch Ad</button>
+        <div class="ad-stat">Ads watched this session: <b id="ad-count">0</b></div>
+      </div>
     </div>
   </section>
 
@@ -468,7 +493,8 @@ input:focus{background:#fffbe0}
 
 <nav class="bottom-nav"><div>
   <a class="nav-item active" id="nav-home" onclick="switchTab('home')"><i class="fa-solid fa-hand-pointer"></i><span>Tap</span></a>
-  <a class="nav-item" id="nav-tasks" onclick="switchTab('tasks')"><i class="fa-solid fa-bolt"></i><span>Tasks</span></a>
+  <a class="nav-item" id="nav-tasks" onclick="switchTab('tasks');switchEarnSeg('tasks')"><i class="fa-solid fa-bolt"></i><span>Tasks</span></a>
+  <a class="nav-item" id="nav-ads" onclick="openAds()"><i class="fa-solid fa-circle-play"></i><span>Ads</span></a>
   <a class="nav-item" id="nav-earn" onclick="switchTab('earn')"><i class="fa-solid fa-user-group"></i><span>Team</span></a>
   <a class="nav-item" id="nav-withdraw" onclick="switchTab('withdraw')"><i class="fa-solid fa-sack-dollar"></i><span>Cash</span></a>
 </div></nav>
@@ -1343,6 +1369,43 @@ function switchTab(t) {
     autoAd();
 }
 
+
+// ---------- WATCH ADS (server-verified reward) ----------
+let adBusy = false, adSession = 0;
+function openAds() {
+    switchTab('tasks'); switchEarnSeg('ads');
+    document.getElementById('nav-tasks').classList.remove('active');
+    document.getElementById('nav-ads').classList.add('active');
+}
+function switchEarnSeg(k) {
+    document.getElementById('panel-tasks').style.display = k === 'tasks' ? '' : 'none';
+    document.getElementById('panel-ads').style.display = k === 'ads' ? '' : 'none';
+    document.getElementById('seg-tasks').classList.toggle('on', k === 'tasks');
+    document.getElementById('seg-ads').classList.toggle('on', k === 'ads');
+}
+async function watchAd() {
+    if (!S || !S.isVerified) { showVerify(); return; }
+    if (adBusy || busy) return;
+    adBusy = true;
+    const btn = document.getElementById('watch-ad-btn');
+    const old = btn.innerHTML; btn.innerHTML = 'Loading ad...'; btn.disabled = true;
+    try {
+        const st = await api('/api/ad/start', {});
+        if (!st.ok) { showToast(st.error || 'Error'); return; }
+        if (typeof show_12348157 !== 'function') { showToast('Ad not available. Try again later.'); return; }
+        let watched = false;
+        try { await show_12348157(); watched = true; } catch (e) { watched = false; }
+        if (!watched) { showToast('Ad not completed. No reward.'); return; }
+        const cl = await api('/api/ad/claim', { token: st.token });
+        if (!cl.ok) { showToast(cl.error || 'Error'); return; }
+        setState(cl.data);
+        adSession++; document.getElementById('ad-count').textContent = adSession;
+        showToast('+5,000 BabyDoge earned!');
+    } finally {
+        adBusy = false; btn.innerHTML = old; btn.disabled = false;
+    }
+}
+
 // Server se latest data lao (tap/busy ho to skip, taake koi tap na kho jaye)
 async function refreshMe() {
     if (!S || !S.isVerified || document.hidden || pending > 0 || inflight > 0 || tapBusy || busy) return;
@@ -1407,4 +1470,4 @@ async function requestWithdraw() {
 startApp();
 </script>
 </body>
-                                                                    </html>
+            </html>
