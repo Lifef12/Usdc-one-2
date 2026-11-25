@@ -37,9 +37,9 @@ const DAILY_BONUS = 0.5e6 * U;       // 500K BabyDoge daily bonus (din me ek baa
 const MIN_WITHDRAW = 80e6 * U;      // 80M BabyDoge minimum withdraw
 // ---------- WATCH ADS (Monetag rewarded) ----------
 // Reward is credited by the SERVER only after: start -> (ad is shown) -> claim, with a one-time token.
-const AD_REWARD = 50 * U;            // coins per ad (change here)
+const AD_REWARD = 5000 * U;            // coins per ad (change here)
 const AD_COOLDOWN_MS = 30 * 1000;    // minimum gap between two rewarded ads per user
-const AD_MIN_WATCH_MS = 5 * 1000;    // claim before this = ad was skipped / fake
+const AD_MIN_WATCH_MS = 2 * 1000;    // claim before this = ad was skipped / fake
 const AD_TOKEN_TTL_MS = 10 * 60 * 1000;
 const MIN_REFS = 4;                  // withdraw ke liye kam az kam itne VERIFIED referrals zaroori
 
@@ -769,7 +769,14 @@ app.post('/api/ad/claim', auth, wrap(async (req, res) => {
         { $set: { adTok: '', adLastClaim: now }, $inc: { balance: AD_REWARD, adsWatched: 1 } },
         { new: true }
     );
-    if (!done) return res.json({ ok: false, error: 'Ad was not completed. Please try again.' });
+    if (!done) {
+        const f = await User.findOne({ id: u.id }).select('adTok adTokAt adLastClaim').lean();
+        let msg = 'Ad was not completed. Please try again.';
+        if (!f || f.adTok !== tok) msg = 'Ad session expired. Please tap Watch Ad again.';
+        else if (now - (f.adTokAt || 0) < AD_MIN_WATCH_MS) msg = 'Ad closed too early. Please watch the ad fully.';
+        else if (now - (f.adLastClaim || 0) < AD_COOLDOWN_MS) msg = 'Please wait a few seconds before the next ad.';
+        return res.json({ ok: false, error: msg });
+    }
     res.json({ ok: true, data: await userView(done), reward: AD_REWARD / U });
 }));
 
