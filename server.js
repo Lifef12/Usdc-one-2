@@ -36,8 +36,8 @@ const JOIN_BONUS = 0.5e6 * U;        // 500K BabyDoge joining bonus (pehli baar 
 const DAILY_BONUS = 0.5e6 * U;       // 500K BabyDoge daily bonus (din me ek baar, UTC)
 const MIN_WITHDRAW = 80e6 * U;      // 80M BabyDoge minimum withdraw
 // ---------- WATCH ADS (Monetag rewarded) ----------
-// Reward is credited by the SERVER only after: start -> (ad is shown) -> claim, with a one-time token.
-const AD_REWARD = 5000 * U;            // coins per ad (change here)
+// Flow: Open (start token) -> ad dekho -> Claim (one-time token). Reward sirf SERVER credit karta hai.
+const AD_REWARD = 5000 * U;            // 5,000 BabyDoge per ad (change here)
 const AD_COOLDOWN_MS = 30 * 1000;    // minimum gap between two rewarded ads per user
 const AD_MIN_WATCH_MS = 2 * 1000;    // claim before this = ad was skipped / fake
 const AD_TOKEN_TTL_MS = 10 * 60 * 1000;
@@ -140,13 +140,20 @@ UserSchema.index({ referredBy: 1 });
 const User = mongoose.model('User', UserSchema);
 
 // ONE-TIME FIX: purane users jinki referrals / withdrawals field array nahi hai ("Cannot apply $pull to a non-array value" error)
-// Ye har start par chalta hai, safe hai (sirf kharab documents ko [] banata hai).
+// + AD FIX: purane users ke documents me ad fields (adLastClaim, adTokAt, adsWatched, adTok) hi nahi the,
+//   is wajah se ad claim query match nahi karti thi ("Ad was not completed" error). Ye unhe default de deta hai.
+// Ye har start par chalta hai, safe hai (sirf kharab / missing fields theek karta hai).
 mongoose.connection.on('open', async () => {
     try {
         const a = await User.collection.updateMany({ referrals: { $not: { $type: 'array' } } }, { $set: { referrals: [] } });
         const b = await User.collection.updateMany({ withdrawals: { $not: { $type: 'array' } } }, { $set: { withdrawals: [] } });
         console.log('🛠 Array fields fixed -> referrals:', a.modifiedCount, '| withdrawals:', b.modifiedCount);
-    } catch (e) { console.log('Array fix error:', e.message); }
+        const c1 = await User.collection.updateMany({ adLastClaim: { $exists: false } }, { $set: { adLastClaim: 0 } });
+        const c2 = await User.collection.updateMany({ adTokAt: { $exists: false } }, { $set: { adTokAt: 0 } });
+        const c3 = await User.collection.updateMany({ adsWatched: { $exists: false } }, { $set: { adsWatched: 0 } });
+        const c4 = await User.collection.updateMany({ adTok: { $exists: false } }, { $set: { adTok: '' } });
+        console.log('🛠 Ad fields fixed ->', c1.modifiedCount, c2.modifiedCount, c3.modifiedCount, c4.modifiedCount);
+    } catch (e) { console.log('Array/ad fix error:', e.message); }
 });
 
 // userId unique: ek user ki ek waqt mein sirf ek pending withdrawal
@@ -475,6 +482,13 @@ function publicUser(u, pending) {
             nextTime: t.next
         },
         daily: { claimed: u.dailyDay === utcDay(), reward: fromMicro(DAILY_BONUS) },
+        // Watch Ads info: reward, cooldown, last claim time (frontend countdown ke liye), total watched
+        ads: {
+            reward: AD_REWARD / U,
+            cooldown: AD_COOLDOWN_MS,
+            lastClaim: Number(u.adLastClaim) || 0,
+            watched: Number(u.adsWatched) || 0
+        },
         proof: pending ? { task: pending.task, status: 'ready' } : null,
         referrals: cleanReferrals(u.referrals),
         withdrawals: (Array.isArray(u.withdrawals) ? u.withdrawals : []).slice(0, 50)
@@ -596,7 +610,7 @@ app.use(express.urlencoded({ extended: false, limit: '10kb' }));
 app.use((req, res, next) => { res.setHeader('X-Content-Type-Options', 'nosniff'); next(); });
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('/health', (req, res) => res.send(dbReady() ? 'OK' : 'OK (database connecting)'));
-app.get('/api/ping', (req, res) => res.json({ ok: true, db: dbReady(), version: 'babydoge-tapfi-v5-fast' }));
+app.get('/api/ping', (req, res) => res.json({ ok: true, db: dbReady(), version: 'babydoge-tapfi-v6-ads' }));
 
 // ---------- USER API ----------
 
@@ -737,6 +751,8 @@ app.post('/api/task', auth, wrap(async (req, res) => {
 }));
 
 // ---------- WATCH ADS: start / claim ----------
+// start: user "Open" dabata hai -> one-time token milta hai, phir app ad dikhata hai.
+// claim: ad dekhne ke baad user "Claim" dabata hai -> token consume hota hai aur reward milta hai.
 app.post('/api/ad/start', auth, wrap(async (req, res) => {
     const u = req.user;
     if (!u.isVerified) return res.json({ ok: false, error: 'Please verify channels first.' });
@@ -744,7 +760,7 @@ app.post('/api/ad/start', auth, wrap(async (req, res) => {
     if (guard) return res.json({ ok: false, error: guard });
 
     const now = Date.now();
-    const wait = (u.adLastClaim || 0) + AD_COOLDOWN_MS - now;
+    const wait = (Number(u.adLastClaim) || 0) + AD_COOLDOWN_MS - now;
     if (wait > 0) return res.json({ ok: false, error: 'Please wait ' + Math.ceil(wait / 1000) + 's for the next ad.' });
 
     const tok = crypto.randomBytes(16).toString('hex');
@@ -755,16 +771,24 @@ app.post('/api/ad/start', auth, wrap(async (req, res) => {
 app.post('/api/ad/claim', auth, wrap(async (req, res) => {
     const u = req.user;
     const tok = String(req.body.token || '');
-    if (!tok) return res.json({ ok: false, error: 'Invalid ad session.' });
+    if (!tok || tok.length > 64) return res.json({ ok: false, error: 'Invalid ad session.' });
     const guard = await telegramGuard(u);
     if (guard) return res.json({ ok: false, error: guard });
 
     const now = Date.now();
+    // FIX: purane users ke document me adLastClaim field nahi hota. Mongo me missing field par
+    // { $lte } match nahi karta tha, is wajah se hamesha "Ad was not completed" aata tha.
+    // Ab missing field bhi allowed hai ($or + $exists:false).
     const done = await User.findOneAndUpdate(
         {
-            id: u.id, adTok: tok,
+            id: u.id,
+            adTok: tok,
             adTokAt: { $lte: now - AD_MIN_WATCH_MS, $gte: now - AD_TOKEN_TTL_MS },
-            adLastClaim: { $lte: now - AD_COOLDOWN_MS }
+            $or: [
+                { adLastClaim: { $exists: false } },
+                { adLastClaim: null },
+                { adLastClaim: { $lte: now - AD_COOLDOWN_MS } }
+            ]
         },
         { $set: { adTok: '', adLastClaim: now }, $inc: { balance: AD_REWARD, adsWatched: 1 } },
         { new: true }
@@ -772,9 +796,10 @@ app.post('/api/ad/claim', auth, wrap(async (req, res) => {
     if (!done) {
         const f = await User.findOne({ id: u.id }).select('adTok adTokAt adLastClaim').lean();
         let msg = 'Ad was not completed. Please try again.';
-        if (!f || f.adTok !== tok) msg = 'Ad session expired. Please tap Watch Ad again.';
-        else if (now - (f.adTokAt || 0) < AD_MIN_WATCH_MS) msg = 'Ad closed too early. Please watch the ad fully.';
-        else if (now - (f.adLastClaim || 0) < AD_COOLDOWN_MS) msg = 'Please wait a few seconds before the next ad.';
+        if (!f || f.adTok !== tok) msg = 'Ad session expired. Please tap Open again.';
+        else if (now - (Number(f.adTokAt) || 0) < AD_MIN_WATCH_MS) msg = 'Ad closed too early. Please watch the ad fully.';
+        else if (now - (Number(f.adTokAt) || 0) > AD_TOKEN_TTL_MS) msg = 'Ad session expired. Please tap Open again.';
+        else if (now - (Number(f.adLastClaim) || 0) < AD_COOLDOWN_MS) msg = 'Please wait a few seconds before the next ad.';
         return res.json({ ok: false, error: msg });
     }
     res.json({ ok: true, data: await userView(done), reward: AD_REWARD / U });
@@ -1217,7 +1242,7 @@ app.get('/admin/dashboard', checkAdmin, wrap(async (req, res) => {
 <p>👤 <b>${esc(found.username)}</b> | ID: <code>${esc(found.id)}</code></p>
 <p>💰 Balance: <b>${fmtD(found.balance)} ${COIN}</b> | 📤 Total Withdrawn: <b>${fmtD(found.totalWithdrawn)} ${COIN}</b></p>
 <p>✅ Verified: ${found.isVerified ? 'Yes' : 'No'} | 🚫 Banned: ${found.isBanned ? 'Yes' : 'No'} | 👥 Referrals (verified): ${fs.refs} | Referred by: ${esc(found.referredBy || 'Direct')} | Ref credited: ${found.refCredited ? 'Yes' : 'No'} | Device allowed: ${found.deviceOk ? 'Yes' : 'No'}</p>
-<p>👆 Today's lines: ${ts.done} / ${ROUNDS_PER_DAY} | 🏦 Wallet: <code>${esc(found.wallet || 'not linked')}</code></p>
+<p>👆 Today's lines: ${ts.done} / ${ROUNDS_PER_DAY} | 🎬 Ads watched: ${Number(found.adsWatched) || 0} | 🏦 Wallet: <code>${esc(found.wallet || 'not linked')}</code></p>
 <div class="row"><input type="number" step="any" id="amt" placeholder="Amount (${COIN})">
 <button class="b g" data-act="bal" data-do="add" data-uid="${esc(found.id)}">+ Add</button>
 <button class="b r" data-act="bal" data-do="cut" data-uid="${esc(found.id)}">- Cut</button>
