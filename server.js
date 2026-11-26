@@ -1218,9 +1218,10 @@ app.get('/admin/dashboard', checkAdmin, wrap(async (req, res) => {
         User.countDocuments(),
         User.countDocuments({ isVerified: true }),
         PendingRequest.find({}).sort({ _id: -1 }),
-        User.aggregate([{ $group: { _id: null, bal: { $sum: '$balance' }, paid: { $sum: '$totalWithdrawn' } } }])
+        User.aggregate([{ $group: { _id: null, bal: { $sum: '$balance' }, paid: { $sum: '$totalWithdrawn' }, ads: { $sum: '$adsWatched' } } }])
     ]);
-    const s = agg[0] || { bal: 0, paid: 0 };
+    const s = agg[0] || { bal: 0, paid: 0, ads: 0 };
+    const totalAds = Number(s.ads) || 0;
     const whi = await tg('getWebhookInfo', {});
     const wh = whi.ok ? whi.result : {};
     const q = String(req.query.search || '').trim().slice(0, 64);
@@ -1276,7 +1277,9 @@ table{width:100%;border-collapse:collapse}th,td{padding:8px;text-align:left;bord
 <div class="st"><small>Verified Users</small><div>${verified}</div></div>
 <div class="st"><small>Users' Balance</small><div>${fmtD(s.bal)} ${COIN}</div></div>
 <div class="st"><small>Paid Out</small><div>${fmtD(s.paid)} ${COIN}</div></div>
-<div class="st"><small>Pending Requests</small><div>${pending.length}</div></div></div>
+<div class="st"><small>Pending Requests</small><div>${pending.length}</div></div>
+<div class="st"><small>🎬 Total Ads Watched</small><div>${totalAds.toLocaleString('en-US')}</div></div>
+<div class="st"><small>Ads Reward Given</small><div>${fmtD(totalAds * AD_REWARD)} ${COIN}</div></div></div>
 <div class="card"><h3>⏳ Pending Withdrawal Requests</h3>${pending.length ? `<table><tr><th>User ID</th><th>Amount</th><th>Verified Refs</th><th>Total Withdrawn (paid #)</th><th>Wallet (BEP-20)</th><th>Action</th></tr>${reqRows}</table>` : '<p style="color:#7e8ba3;font-size:12px">No pending requests.</p>'}</div>
 <div class="card"><h3>🔍 Search & Manage User</h3><form method="GET" class="row"><input name="search" placeholder="Telegram ID or @username" value="${esc(q)}"><button class="b">Search</button></form>${userBox}</div>
 <div class="card"><h3>🛠 Referral Repair</h3><p style="font-size:12px;color:#7e8ba3;margin-bottom:10px">Missed referrals (user verified but referrer got no bonus) ko ek click me theek karo.</p><button class="b g" style="width:100%" data-act="rep">Repair All Referrals</button></div>
