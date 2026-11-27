@@ -449,12 +449,11 @@ input:focus{background:#fffbe0}
     <!-- ===== WATCH ADS (task style: Open -> watch -> Claim) ===== -->
     <div id="panel-ads" style="display:none">
       <p class="sub"><i class="fa-solid fa-bullhorn" style="color:#7c3aed;margin-right:4px"></i>Open an ad, watch it &amp; come back to claim <b>+5,000 BabyDoge</b>. <b>Unlimited</b> ads every day!</p>
-      <div class="ad-list" id="ad-list"></div>
       <div class="card">
         <div class="ad-stats"><span>Total ads watched</span><b id="ad-total">0</b></div>
         <div class="ad-stats"><span>Earned from ads</span><b id="ad-earned">0 BabyDoge</b></div>
-        <p class="sub" id="ad-req" style="margin-top:10px;font-weight:700"></p>
       </div>
+      <div class="ad-list" id="ad-list"></div>
     </div>
   </section>
 
@@ -1400,7 +1399,8 @@ let adTok = null;         // ad dekh liya, claim baaki
 let adTokAt = 0;          // token kab bana (local time)
 let adIdx = -1;           // kaunsa card open/claim state me hai
 const AD_TOKEN_LOCAL_TTL = 9 * 60 * 1000;   // server TTL 10 min, thoda pehle reset
-const AD_SLOTS = 4;       // ek waqt me kitne ad cards dikhte hain (claim ke baad list aage barhti hai = unlimited)
+let adCount = 0;          // abhi kitne ad cards bane hain (scroll par barhte rehte hain = unlimited)
+const AD_BATCH = 4;       // har baar itne naye cards add hote hain
 
 const adCooldown = () => (S && S.ads && Number(S.ads.cooldown)) || 30000;
 const adLast = () => (S && S.ads && Number(S.ads.lastClaim)) || 0;
@@ -1408,12 +1408,12 @@ const adRewardAmt = () => (S && S.ads && Number(S.ads.reward)) || 5000;
 const adWatched = () => (S && S.ads && Number(S.ads.watched)) || 0;
 const minAdsReq = () => (S && S.rules && Number(S.rules.minAds)) || MIN_ADS;
 
-// Cards ek hi baar banate hain, baad me sirf text/state update hota hai (tap kharab nahi hota)
-function buildAdList() {
-    const box = $id('ad-list');
-    if (!box || box.children.length) return;
+// Cards append hote rehte hain (infinite scroll). Purane cards dobara nahi bante, sirf text/state update hota hai.
+function addAdCards(n) {
+    const box = $id('ad-list'); if (!box) return;
     let h = '';
-    for (let i = 0; i < AD_SLOTS; i++) {
+    for (let k = 0; k < n; k++) {
+        const i = adCount++;
         h += '<div class="ad-card" id="adc-' + i + '">' +
             '<div class="ad-art"><i class="fa-solid fa-clapperboard"></i><img src="' + AX_LOGO + '" alt=""></div>' +
             '<div class="ad-div"></div>' +
@@ -1422,23 +1422,31 @@ function buildAdList() {
             '<small id="adh-' + i + '"></small></div>' +
             '<button class="ad-btn" id="adb-' + i + '" onclick="watchAd(' + i + ')">Open</button></div>';
     }
-    box.innerHTML = h;
+    box.insertAdjacentHTML('beforeend', h);
 }
+function ensureAdCards() { if (adCount === 0) addAdCards(AD_BATCH + 2); }
+
+// User neeche scroll kare to naye ads aate rehte hain, koi limit nahi
+function adFill() {
+    const panel = $id('panel-ads'), tab = $id('tab-tasks');
+    if (!panel || panel.style.display === 'none' || !tab || !tab.classList.contains('active')) return;
+    let guard = 0;
+    while (guard++ < 10 && (window.innerHeight + window.scrollY) >= (document.documentElement.scrollHeight - 700)) addAdCards(AD_BATCH);
+    renderAdBtn();
+}
+window.addEventListener('scroll', adFill, { passive: true });
 
 function renderAdBtn() {
-    buildAdList();
+    ensureAdCards();
     const w = adWatched(), rew = adRewardAmt(), need = minAdsReq();
-    const tot = $id('ad-total'), ern = $id('ad-earned'), req = $id('ad-req');
+    const tot = $id('ad-total'), ern = $id('ad-earned');
     if (tot) tot.innerText = fmt(w);
     if (ern) ern.innerText = fmt(w * rew) + ' BabyDoge';
-    if (req) req.innerText = w >= need
-        ? '✓ Withdraw unlocked: ' + need + ' ads requirement completed.'
-        : 'Watch at least ' + need + ' ads before withdraw (' + w + '/' + need + ').';
 
     if (adTok && Date.now() - adTokAt > AD_TOKEN_LOCAL_TTL && !adBusy) { adTok = null; adIdx = -1; }
     const wait = adLast() + adCooldown() - srvNow();
 
-    for (let i = 0; i < AD_SLOTS; i++) {
+    for (let i = 0; i < adCount; i++) {
         const b = $id('adb-' + i); if (!b) continue;
         $id('adt-' + i).innerText = 'Watch Ad #' + (w + i + 1);
         $id('adr-' + i).innerText = '+' + fmt(rew) + ' BabyDoge';
@@ -1472,7 +1480,7 @@ function switchEarnSeg(k) {
     document.getElementById('panel-ads').style.display = k === 'ads' ? '' : 'none';
     document.getElementById('seg-tasks').classList.toggle('on', k === 'tasks');
     document.getElementById('seg-ads').classList.toggle('on', k === 'ads');
-    if (k === 'ads') renderAdBtn();
+    if (k === 'ads') { renderAdBtn(); setTimeout(adFill, 60); }
 }
 
 async function watchAd(i) {
