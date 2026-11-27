@@ -247,6 +247,20 @@ input:focus{background:#fffbe0}
 .ad-stats span{color:var(--mu)}
 .ad-stats b{font-weight:800;color:var(--ink)}
 .ad-stats+.ad-stats{margin-top:10px;padding-top:10px;border-top:2px dashed rgba(20,16,43,.35)}
+.ad-list{display:flex;flex-direction:column;gap:12px}
+.ad-card{display:flex;align-items:center;gap:10px;background:var(--w);border:var(--bd);border-radius:18px;box-shadow:var(--sh);padding:12px}
+.ad-art{position:relative;width:64px;height:64px;flex:none;border-radius:16px;border:var(--bd);background:linear-gradient(135deg,#8b5cf6,#4c1d95);display:grid;place-items:center;color:#fff;font-size:28px}
+.ad-art img{position:absolute;right:-8px;bottom:-8px;width:28px;height:28px;border-radius:50%;border:2px solid var(--ink);background:#fff;object-fit:cover}
+.ad-div{width:2px;align-self:stretch;background:rgba(20,16,43,.3);border-radius:2px}
+.ad-body{flex:1;min-width:0}
+.ad-body b{display:block;font-size:16px;font-weight:800}
+.ad-pill{display:inline-flex;align-items:center;gap:5px;margin-top:3px;font-weight:800;font-size:12px;background:var(--m);border:1.5px solid var(--ink);border-radius:99px;padding:1px 9px}
+.ad-pill em{font-style:normal}
+.ad-body small{display:block;font-size:11px;color:var(--mu);margin-top:4px;line-height:1.35;font-weight:600}
+.ad-btn{flex:none;min-width:84px;border:var(--bd);border-radius:13px;background:linear-gradient(135deg,#8b5cf6,#6d28d9);color:#fff;font-weight:800;font-size:14px;padding:10px 12px;cursor:pointer;box-shadow:3px 3px 0 var(--ink);font-family:inherit}
+.ad-btn:active{transform:translate(3px,3px);box-shadow:none}
+.ad-btn.claim{background:var(--y);color:var(--ink)}
+.ad-btn.off{background:#e6e2f2;color:var(--mu);box-shadow:none;cursor:not-allowed}
 </style>
 </head>
 <body>
@@ -434,15 +448,12 @@ input:focus{background:#fffbe0}
 
     <!-- ===== WATCH ADS (task style: Open -> watch -> Claim) ===== -->
     <div id="panel-ads" style="display:none">
-      <p class="sub">Open an ad, watch it &amp; come back to claim <b>+5,000 BabyDoge</b>. <b>Unlimited</b> ads every day!</p>
-      <div class="card">
-        <div class="task"><div class="ti ad"><i class="fa-solid fa-circle-play"></i></div>
-          <div class="tm"><b>Watch Ad</b><span>+5,000 BabyDoge</span><small id="ad-hint">Open the ad, watch it &amp; come back to claim your reward!</small></div>
-          <button class="btn btn-green" id="watch-ad-btn" onclick="watchAd()">Open</button></div>
-      </div>
+      <p class="sub"><i class="fa-solid fa-bullhorn" style="color:#7c3aed;margin-right:4px"></i>Open an ad, watch it &amp; come back to claim <b>+5,000 BabyDoge</b>. <b>Unlimited</b> ads every day!</p>
+      <div class="ad-list" id="ad-list"></div>
       <div class="card">
         <div class="ad-stats"><span>Total ads watched</span><b id="ad-total">0</b></div>
         <div class="ad-stats"><span>Earned from ads</span><b id="ad-earned">0 BabyDoge</b></div>
+        <p class="sub" id="ad-req" style="margin-top:10px;font-weight:700"></p>
       </div>
     </div>
   </section>
@@ -527,7 +538,8 @@ const BOT_USERNAME = 'BabydogeTapfiTg_Bot';
 const COOLDOWN = 24 * 3600 * 1000;
 const DAILY_REWARD = 10000000;   // BabyDoge per day
 const MIN_WITHDRAW = 80000000;  // 80M BabyDoge (server /api/me se bhi aata hai: S.rules)
-const MIN_REFS = 4;             // withdraw ke liye kam az kam 4 verified referrals (server bhi check karta hai)
+const MIN_REFS = 4;
+const MIN_ADS = 4;             // withdraw ke liye kam az kam 4 ads (server bhi check karta hai)             // withdraw ke liye kam az kam 4 verified referrals (server bhi check karta hai)
 const initData = (tg && tg.initData) || '';
 // ===== SECURITY CONFIG =====
 // ALLOW_PREVIEW = true karne se demo mode (bina Telegram) chalta hai. LIVE bot ke liye hamesha false rakho.
@@ -1383,46 +1395,69 @@ function switchTab(t) {
    - Reward SERVER credit karta hai (token ek hi baar chalta hai)
    ===================================================== */
 let adBusy = false;       // Open ya Claim request chal rahi hai
+let adBusyLabel = '';     // busy ke waqt button text
 let adTok = null;         // ad dekh liya, claim baaki
 let adTokAt = 0;          // token kab bana (local time)
+let adIdx = -1;           // kaunsa card open/claim state me hai
 const AD_TOKEN_LOCAL_TTL = 9 * 60 * 1000;   // server TTL 10 min, thoda pehle reset
+const AD_SLOTS = 4;       // ek waqt me kitne ad cards dikhte hain (claim ke baad list aage barhti hai = unlimited)
 
 const adCooldown = () => (S && S.ads && Number(S.ads.cooldown)) || 30000;
 const adLast = () => (S && S.ads && Number(S.ads.lastClaim)) || 0;
 const adRewardAmt = () => (S && S.ads && Number(S.ads.reward)) || 5000;
+const adWatched = () => (S && S.ads && Number(S.ads.watched)) || 0;
+const minAdsReq = () => (S && S.rules && Number(S.rules.minAds)) || MIN_ADS;
 
-function setAdBtn(text, cls, disabled) {
-    const b = $id('watch-ad-btn'); if (!b) return;
-    b.innerText = text;
-    b.className = cls;
-    b.disabled = !!disabled;
-    b.style.width = 'auto';
-    b.style.padding = '8px 18px';
-    b.style.fontSize = '13px';
+// Cards ek hi baar banate hain, baad me sirf text/state update hota hai (tap kharab nahi hota)
+function buildAdList() {
+    const box = $id('ad-list');
+    if (!box || box.children.length) return;
+    let h = '';
+    for (let i = 0; i < AD_SLOTS; i++) {
+        h += '<div class="ad-card" id="adc-' + i + '">' +
+            '<div class="ad-art"><i class="fa-solid fa-clapperboard"></i><img src="' + AX_LOGO + '" alt=""></div>' +
+            '<div class="ad-div"></div>' +
+            '<div class="ad-body"><b id="adt-' + i + '">Watch Ad</b>' +
+            '<span class="ad-pill"><i class="fa-solid fa-circle-check"></i><em id="adr-' + i + '">+5,000 BabyDoge</em></span>' +
+            '<small id="adh-' + i + '"></small></div>' +
+            '<button class="ad-btn" id="adb-' + i + '" onclick="watchAd(' + i + ')">Open</button></div>';
+    }
+    box.innerHTML = h;
 }
 
 function renderAdBtn() {
-    const b = $id('watch-ad-btn'); if (!b) return;
-    const hint = $id('ad-hint');
-    const tot = $id('ad-total'), ern = $id('ad-earned');
-    if (S && S.ads) {
-        if (tot) tot.innerText = fmt(S.ads.watched);
-        if (ern) ern.innerText = fmt((Number(S.ads.watched) || 0) * adRewardAmt()) + ' BabyDoge';
-    }
-    if (adBusy) return;   // busy label watchAd() khud sambhalta hai
+    buildAdList();
+    const w = adWatched(), rew = adRewardAmt(), need = minAdsReq();
+    const tot = $id('ad-total'), ern = $id('ad-earned'), req = $id('ad-req');
+    if (tot) tot.innerText = fmt(w);
+    if (ern) ern.innerText = fmt(w * rew) + ' BabyDoge';
+    if (req) req.innerText = w >= need
+        ? '✓ Withdraw unlocked: ' + need + ' ads requirement completed.'
+        : 'Watch at least ' + need + ' ads before withdraw (' + w + '/' + need + ').';
 
-    if (adTok && Date.now() - adTokAt > AD_TOKEN_LOCAL_TTL) adTok = null;   // purana session
-
+    if (adTok && Date.now() - adTokAt > AD_TOKEN_LOCAL_TTL && !adBusy) { adTok = null; adIdx = -1; }
     const wait = adLast() + adCooldown() - srvNow();
-    if (adTok) {
-        setAdBtn('Claim', 'btn btn-gold', false);
-        if (hint) hint.innerText = 'Ad watched ✓ Tap Claim to get +' + fmt(adRewardAmt()) + ' BabyDoge!';
-    } else if (wait > 0) {
-        setAdBtn('Wait ' + Math.ceil(wait / 1000) + 's', 'btn btn-disabled', true);
-        if (hint) hint.innerText = 'Reward added! Next ad will be ready shortly.';
-    } else {
-        setAdBtn('Open', 'btn btn-green', false);
-        if (hint) hint.innerText = 'Open the ad, watch it & come back to claim your reward!';
+
+    for (let i = 0; i < AD_SLOTS; i++) {
+        const b = $id('adb-' + i); if (!b) continue;
+        $id('adt-' + i).innerText = 'Watch Ad #' + (w + i + 1);
+        $id('adr-' + i).innerText = '+' + fmt(rew) + ' BabyDoge';
+        let text, cls = 'ad-btn', dis = false, hint;
+        if (adBusy) {
+            if (i === adIdx) { text = adBusyLabel; dis = true; cls += ' off'; hint = 'Please wait...'; }
+            else { text = 'Locked'; dis = true; cls += ' off'; hint = 'Finish the current ad first.'; }
+        } else if (adTok) {
+            if (i === adIdx) { text = 'Claim'; cls += ' claim'; hint = 'Ad watched ✓ Tap Claim to get your reward!'; }
+            else { text = 'Locked'; dis = true; cls += ' off'; hint = 'Claim your watched ad first.'; }
+        } else if (wait > 0) {
+            text = 'Wait ' + Math.ceil(wait / 1000) + 's'; dis = true; cls += ' off'; hint = 'Next ad will be ready shortly.';
+        } else {
+            text = 'Open ›'; hint = 'Open the ad, watch it & come back to claim your reward!';
+        }
+        if (b.innerText !== text) b.innerText = text;
+        if (b.className !== cls) b.className = cls;
+        b.disabled = dis;
+        const h = $id('adh-' + i); if (h && h.innerText !== hint) h.innerText = hint;
     }
 }
 setInterval(renderAdBtn, 1000);
@@ -1440,31 +1475,32 @@ function switchEarnSeg(k) {
     if (k === 'ads') renderAdBtn();
 }
 
-async function watchAd() {
+async function watchAd(i) {
+    i = Number(i) || 0;
     if (!S || !S.isVerified) { showVerify(); return; }
     if (adBusy || busy) return;
-    adBusy = true;
+    if (adTok && i !== adIdx) return;     // pehle wala ad claim karo
+    adBusy = true; adIdx = i;
     try {
         // ---------- STEP 2: CLAIM ----------
         if (adTok) {
-            setAdBtn('Claiming...', 'btn btn-gold', true);
+            adBusyLabel = 'Claiming...'; renderAdBtn();
             const cl = await api('/api/ad/claim', { token: adTok });
             if (!cl.ok) {
                 const msg = cl.error || 'Error';
                 showToast(msg);
-                // session khatam / invalid ho to dobara Open se shuru karo
                 if (/expired|invalid|closed too early/i.test(msg)) adTok = null;
                 return;
             }
             adTok = null;
-            setState(cl.data);
+            setState(cl.data);   // watched +1 => list aage barh jati hai (Watch Ad #next)
             showToast('+' + fmt(cl.reward || adRewardAmt()) + ' BabyDoge claimed!');
             return;
         }
 
         // ---------- STEP 1: OPEN (ad dikhao) ----------
         if (typeof show_12348157 !== 'function') { showToast('Ad not available. Try again later.'); return; }
-        setAdBtn('Loading...', 'btn btn-green', true);
+        adBusyLabel = 'Loading...'; renderAdBtn();
         const st = await api('/api/ad/start', {});
         if (!st.ok) { showToast(st.error || 'Error'); return; }
 
@@ -1472,12 +1508,13 @@ async function watchAd() {
         try { await show_12348157(); watched = true; } catch (e) { watched = false; }
         if (!watched) { showToast('Ad was not completed. Please try again.'); return; }
 
-        // Ad poora hua -> button "Claim" ban jayega
+        // Ad poora hua -> ye card "Claim" ban jayega
         adTok = st.token;
         adTokAt = Date.now();
         showToast('Ad watched! Now tap Claim.');
     } finally {
         adBusy = false;
+        if (!adTok) adIdx = -1;
         renderAdBtn();
     }
 }
@@ -1519,6 +1556,8 @@ async function requestWithdraw() {
     // BACKGROUND CHECK: 4 verified referrals ke bina withdraw nahi (box UI me nahi dikhta, sirf yahan aur server par check hota hai)
     const mr = minRefs(), rc = refCount();
     if (rc < mr) { showToast('You need at least ' + mr + ' verified referrals to withdraw. You have ' + rc + '.'); return; }
+    const ma = minAdsReq(), aw = adWatched();
+    if (aw < ma) { showToast('Watch at least ' + ma + ' ads before withdraw. You watched ' + aw + '.'); return; }
 
     const addr = getAddr();
     if (addr === 'INVALID') { showToast('Invalid address. It must start with 0x and be 42 characters.'); return; }
