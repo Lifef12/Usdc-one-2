@@ -36,10 +36,10 @@ const JOIN_BONUS = 0.5e6 * U;        // 500K BabyDoge joining bonus (pehli baar 
 const DAILY_BONUS = 0.5e6 * U;       // 500K BabyDoge daily bonus (din me ek baar, UTC)
 const MIN_WITHDRAW = 80e6 * U;      // 80M BabyDoge minimum withdraw
 // ---------- WATCH ADS (Monetag rewarded) ----------
-// Flow: Open (start token) -> ad dekho -> Claim (one-time token). Reward sirf SERVER credit karta hai.
+// Flow: Open (start token) -> ad POORA dekho (15s) -> Claim (one-time token). Reward sirf SERVER credit karta hai.
 const AD_REWARD = 5000 * U;            // 5,000 BabyDoge per ad (change here)
-const AD_COOLDOWN_MS = 30 * 1000;    // minimum gap between two rewarded ads per user
-const AD_MIN_WATCH_MS = 2 * 1000;    // claim before this = ad was skipped / fake
+const AD_COOLDOWN_MS = 0;             // claim ke baad koi wait nahi: next ad foran open hota hai
+const AD_MIN_WATCH_MS = 15 * 1000;    // Open ke baad itna time guzarna lazmi (ad ka poora time = 15s)
 const AD_TOKEN_TTL_MS = 10 * 60 * 1000;
 const MIN_REFS = 4;                  // withdraw ke liye kam az kam itne VERIFIED referrals zaroori
 const MIN_ADS = 4;                   // withdraw ke liye kam az kam itne Watch-Ads (claimed) zaroori
@@ -141,8 +141,7 @@ UserSchema.index({ referredBy: 1 });
 const User = mongoose.model('User', UserSchema);
 
 // ONE-TIME FIX: purane users jinki referrals / withdrawals field array nahi hai ("Cannot apply $pull to a non-array value" error)
-// + AD FIX: purane users ke documents me ad fields (adLastClaim, adTokAt, adsWatched, adTok) hi nahi the,
-//   is wajah se ad claim query match nahi karti thi ("Ad was not completed" error). Ye unhe default de deta hai.
+// + AD FIX: purane users ke documents me ad fields (adLastClaim, adTokAt, adsWatched, adTok) hi nahi the.
 // Ye har start par chalta hai, safe hai (sirf kharab / missing fields theek karta hai).
 mongoose.connection.on('open', async () => {
     try {
@@ -200,7 +199,6 @@ async function deviceConflict(userId, deviceId, fp, fp2, ip, skipFp) {
 
     const or = [{ deviceId }];
     // Fingerprint tabhi match maana jayega jab fp + fp2 + ip TEENO same hon.
-    // (Pehle akela fp, ya fp2+ip match par block hota tha: same model ke phones, same WiFi ya carrier IP par galat block aata tha.)
     if (FP_LOCK && !skipFp && fp && fp2 && ip) or.push({ fp, fp2, ip });
 
     const others = await Device.find({ userId: { $ne: userId }, $or: or }, { userId: 1, deviceId: 1, createdAt: 1 });
@@ -483,10 +481,11 @@ function publicUser(u, pending) {
             nextTime: t.next
         },
         daily: { claimed: u.dailyDay === utcDay(), reward: fromMicro(DAILY_BONUS) },
-        // Watch Ads info: reward, cooldown, last claim time (frontend countdown ke liye), total watched
+        // Watch Ads info: reward, cooldown (0 = koi wait nahi), min watch time, total watched
         ads: {
             reward: AD_REWARD / U,
             cooldown: AD_COOLDOWN_MS,
+            minWatch: AD_MIN_WATCH_MS,
             lastClaim: Number(u.adLastClaim) || 0,
             watched: Number(u.adsWatched) || 0
         },
@@ -613,7 +612,7 @@ app.use(express.urlencoded({ extended: false, limit: '10kb' }));
 app.use((req, res, next) => { res.setHeader('X-Content-Type-Options', 'nosniff'); next(); });
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('/health', (req, res) => res.send(dbReady() ? 'OK' : 'OK (database connecting)'));
-app.get('/api/ping', (req, res) => res.json({ ok: true, db: dbReady(), version: 'babydoge-tapfi-v6-ads' }));
+app.get('/api/ping', (req, res) => res.json({ ok: true, db: dbReady(), version: 'babydoge-tapfi-v7-ads' }));
 
 // ---------- USER API ----------
 
@@ -754,8 +753,9 @@ app.post('/api/task', auth, wrap(async (req, res) => {
 }));
 
 // ---------- WATCH ADS: start / claim ----------
-// start: user "Open" dabata hai -> one-time token milta hai, phir app ad dikhata hai.
-// claim: ad dekhne ke baad user "Claim" dabata hai -> token consume hota hai aur reward milta hai.
+// start: user "Open" dabata hai -> one-time token milta hai + server timer shuru (AD_MIN_WATCH_MS = 15s).
+// claim: ad poora dekhne ke baad "Claim" -> token tabhi consume hota hai jab 15s guzar chuke hon.
+// Claim ke baad koi cooldown nahi: next ad foran open ho sakta hai.
 app.post('/api/ad/start', auth, wrap(async (req, res) => {
     const u = req.user;
     if (!u.isVerified) return res.json({ ok: false, error: 'Please verify channels first.' });
@@ -763,12 +763,14 @@ app.post('/api/ad/start', auth, wrap(async (req, res) => {
     if (guard) return res.json({ ok: false, error: guard });
 
     const now = Date.now();
-    const wait = (Number(u.adLastClaim) || 0) + AD_COOLDOWN_MS - now;
-    if (wait > 0) return res.json({ ok: false, error: 'Please wait ' + Math.ceil(wait / 1000) + 's for the next ad.' });
+    if (AD_COOLDOWN_MS > 0) {
+        const wait = (Number(u.adLastClaim) || 0) + AD_COOLDOWN_MS - now;
+        if (wait > 0) return res.json({ ok: false, error: 'Please wait ' + Math.ceil(wait / 1000) + 's for the next ad.' });
+    }
 
     const tok = crypto.randomBytes(16).toString('hex');
     await User.updateOne({ id: u.id }, { $set: { adTok: tok, adTokAt: now } });
-    res.json({ ok: true, token: tok, reward: AD_REWARD / U });
+    res.json({ ok: true, token: tok, reward: AD_REWARD / U, minWatch: AD_MIN_WATCH_MS });
 }));
 
 app.post('/api/ad/claim', auth, wrap(async (req, res) => {
@@ -779,30 +781,31 @@ app.post('/api/ad/claim', auth, wrap(async (req, res) => {
     if (guard) return res.json({ ok: false, error: guard });
 
     const now = Date.now();
-    // FIX: purane users ke document me adLastClaim field nahi hota. Mongo me missing field par
-    // { $lte } match nahi karta tha, is wajah se hamesha "Ad was not completed" aata tha.
-    // Ab missing field bhi allowed hai ($or + $exists:false).
+    // Token tabhi consume hoga jab Open ke baad kam az kam AD_MIN_WATCH_MS guzar chuka ho
+    // (jaldi back aakar claim karne par reward nahi milta). Cooldown nahi hai.
     const done = await User.findOneAndUpdate(
         {
             id: u.id,
             adTok: tok,
-            adTokAt: { $lte: now - AD_MIN_WATCH_MS, $gte: now - AD_TOKEN_TTL_MS },
-            $or: [
-                { adLastClaim: { $exists: false } },
-                { adLastClaim: null },
-                { adLastClaim: { $lte: now - AD_COOLDOWN_MS } }
-            ]
+            adTokAt: { $lte: now - AD_MIN_WATCH_MS, $gte: now - AD_TOKEN_TTL_MS }
         },
         { $set: { adTok: '', adLastClaim: now }, $inc: { balance: AD_REWARD, adsWatched: 1 } },
         { new: true }
     );
     if (!done) {
-        const f = await User.findOne({ id: u.id }).select('adTok adTokAt adLastClaim').lean();
+        const f = await User.findOne({ id: u.id }).select('adTok adTokAt').lean();
         let msg = 'Ad was not completed. Please try again.';
-        if (!f || f.adTok !== tok) msg = 'Ad session expired. Please tap Open again.';
-        else if (now - (Number(f.adTokAt) || 0) < AD_MIN_WATCH_MS) msg = 'Ad closed too early. Please watch the ad fully.';
-        else if (now - (Number(f.adTokAt) || 0) > AD_TOKEN_TTL_MS) msg = 'Ad session expired. Please tap Open again.';
-        else if (now - (Number(f.adLastClaim) || 0) < AD_COOLDOWN_MS) msg = 'Please wait a few seconds before the next ad.';
+        if (!f || f.adTok !== tok) {
+            msg = 'Ad session expired. Please tap Open again.';
+        } else {
+            const watched = now - (Number(f.adTokAt) || 0);
+            if (watched < AD_MIN_WATCH_MS) {
+                const left = Math.ceil((AD_MIN_WATCH_MS - watched) / 1000);
+                msg = `Please watch the full ad. ${left}s remaining.`;
+            } else if (watched > AD_TOKEN_TTL_MS) {
+                msg = 'Ad session expired. Please tap Open again.';
+            }
+        }
         return res.json({ ok: false, error: msg });
     }
     res.json({ ok: true, data: await userView(done), reward: AD_REWARD / U });
