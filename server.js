@@ -42,6 +42,7 @@ const AD_COOLDOWN_MS = 30 * 1000;    // minimum gap between two rewarded ads per
 const AD_MIN_WATCH_MS = 2 * 1000;    // claim before this = ad was skipped / fake
 const AD_TOKEN_TTL_MS = 10 * 60 * 1000;
 const MIN_REFS = 4;                  // withdraw ke liye kam az kam itne VERIFIED referrals zaroori
+const MIN_ADS = 4;                   // withdraw ke liye kam az kam itne Watch-Ads (claimed) zaroori
 
 // ---------- TAP SYSTEM ----------
 // Ek line = TAP_TARGET taps. Line poori hone par seedha nayi line (koi wait nahi). Din me ROUNDS_PER_DAY lines.
@@ -466,7 +467,7 @@ function publicUser(u, pending) {
         balance: fromMicro(u.balance),
         serverTime: Date.now(),
         isVerified: u.isVerified,
-        rules: { minWithdraw: fromMicro(MIN_WITHDRAW), minRefs: MIN_REFS },
+        rules: { minWithdraw: fromMicro(MIN_WITHDRAW), minRefs: MIN_REFS, minAds: MIN_ADS },
         tasks: {
             tg2: !!(u.tasks && u.tasks.tg2),
             yt1: !!(u.tasks && u.tasks.yt1),
@@ -520,17 +521,19 @@ async function userStats(userId) {
     const id = String(userId);
     const [refs, u] = await Promise.all([
         User.countDocuments({ referredBy: id, isVerified: true }),
-        User.findOne({ id }, { totalWithdrawn: 1, withdrawals: 1 }).lean()
+        User.findOne({ id }, { totalWithdrawn: 1, withdrawals: 1, adsWatched: 1 }).lean()
     ]);
     const w = Array.isArray(u && u.withdrawals) ? u.withdrawals : [];
     return {
         refs,
+        ads: (u && Number(u.adsWatched)) || 0,
         totalWithdrawn: (u && Number(u.totalWithdrawn)) || 0,
         paidCount: w.filter(x => x && String(x.status).toUpperCase() === 'PAID').length
     };
 }
 const statsLine = s =>
     `👥 Verified Referrals: <b>${s.refs}</b>\n` +
+    `🎬 Ads Watched: <b>${s.ads || 0}</b>\n` +
     `📤 Total Withdrawn: <b>${fmtD(s.totalWithdrawn)} ${COIN}</b> (${s.paidCount} paid)`;
 
 // ---------- REFERRAL CREDIT (FIXED) ----------
@@ -915,6 +918,12 @@ app.post('/api/withdraw', auth, wrap(async (req, res) => {
         return res.json({ ok: false, error: `You need at least ${MIN_REFS} verified referrals to withdraw. You have ${refCount}.` });
     }
 
+    // Kam az kam MIN_ADS Watch-Ads (claimed) zaroori
+    const adsDone = Number(u.adsWatched) || 0;
+    if (adsDone < MIN_ADS) {
+        return res.json({ ok: false, error: `Watch at least ${MIN_ADS} ads before withdraw. You watched ${adsDone}.` });
+    }
+
     const guard = await telegramGuard(u);
     if (guard) return res.json({ ok: false, error: guard });
 
@@ -1251,10 +1260,10 @@ app.get('/admin/dashboard', checkAdmin, wrap(async (req, res) => {
 
     // Har pending request ke user ke referrals + total withdrawn
     const pStats = await Promise.all(pending.map(r =>
-        userStats(r.userId).catch(() => ({ refs: 0, totalWithdrawn: 0, paidCount: 0 }))
+        userStats(r.userId).catch(() => ({ refs: 0, ads: 0, totalWithdrawn: 0, paidCount: 0 }))
     ));
 
-    const reqRows = pending.map((r, i) => `<tr><td>${esc(r.userId)}</td><td><b>${fmtD(r.amount)} ${COIN}</b></td><td>${pStats[i].refs}</td><td>${fmtD(pStats[i].totalWithdrawn)} (${pStats[i].paidCount})</td><td><code>${esc(r.address)}</code></td>
+    const reqRows = pending.map((r, i) => `<tr><td>${esc(r.userId)}</td><td><b>${fmtD(r.amount)} ${COIN}</b></td><td>${pStats[i].refs}</td><td>${pStats[i].ads}</td><td>${fmtD(pStats[i].totalWithdrawn)} (${pStats[i].paidCount})</td><td><code>${esc(r.address)}</code></td>
 <td><button class="b g" data-act="req" data-do="approve" data-id="${esc(r.reqId)}">Approve</button> <button class="b r" data-act="req" data-do="reject" data-id="${esc(r.reqId)}">Reject</button></td></tr>`).join('');
 
     let userBox = '';
@@ -1313,7 +1322,7 @@ table{width:100%;border-collapse:collapse}th,td{padding:8px;text-align:left;bord
 <tr><td><b>TOTAL</b></td><td></td><td><b>${fmtD(rwAll)} ${COIN}</b></td></tr>
 </table>
 <p style="font-size:11px;color:#7e8ba3;margin-top:8px">Tap line ka alag counter nahi hai, isliye wo hisaab se nikala gaya (balance + paid + pending - baaki rewards). Isme daily bonus aur admin ke add/cut bhi shamil hain.</p></div>
-<div class="card"><h3>⏳ Pending Withdrawal Requests</h3>${pending.length ? `<table><tr><th>User ID</th><th>Amount</th><th>Verified Refs</th><th>Total Withdrawn (paid #)</th><th>Wallet (BEP-20)</th><th>Action</th></tr>${reqRows}</table>` : '<p style="color:#7e8ba3;font-size:12px">No pending requests.</p>'}</div>
+<div class="card"><h3>⏳ Pending Withdrawal Requests</h3>${pending.length ? `<table><tr><th>User ID</th><th>Amount</th><th>Verified Refs</th><th>Ads</th><th>Total Withdrawn (paid #)</th><th>Wallet (BEP-20)</th><th>Action</th></tr>${reqRows}</table>` : '<p style="color:#7e8ba3;font-size:12px">No pending requests.</p>'}</div>
 <div class="card"><h3>🔍 Search & Manage User</h3><form method="GET" class="row"><input name="search" placeholder="Telegram ID or @username" value="${esc(q)}"><button class="b">Search</button></form>${userBox}</div>
 <div class="card"><h3>🛠 Referral Repair</h3><p style="font-size:12px;color:#7e8ba3;margin-bottom:10px">Missed referrals (user verified but referrer got no bonus) ko ek click me theek karo.</p><button class="b g" style="width:100%" data-act="rep">Repair All Referrals</button></div>
 <div class="card"><h3>📢 Broadcast</h3><textarea id="bc" rows="3" placeholder="Message to all users..."></textarea><button class="b" style="margin-top:10px;width:100%" data-act="bc">Send Broadcast</button></div>
