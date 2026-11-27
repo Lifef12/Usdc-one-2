@@ -448,7 +448,7 @@ input:focus{background:#fffbe0}
 
     <!-- ===== WATCH ADS (task style: Open -> watch -> Claim) ===== -->
     <div id="panel-ads" style="display:none">
-      <p class="sub"><i class="fa-solid fa-bullhorn" style="color:#7c3aed;margin-right:4px"></i>Open an ad, watch it &amp; come back to claim <b>+5,000 BabyDoge</b>. <b>Unlimited</b> ads every day!</p>
+      <p class="sub"><i class="fa-solid fa-bullhorn" style="color:#7c3aed;margin-right:4px"></i>Open an ad, watch it fully &amp; come back to claim <b>+5,000 BabyDoge</b>. <b>Unlimited</b> ads every day!</p>
       <div class="card">
         <div class="ad-stats"><span>Total ads watched</span><b id="ad-total">0</b></div>
         <div class="ad-stats"><span>Earned from ads</span><b id="ad-earned">0 BabyDoge</b></div>
@@ -537,8 +537,9 @@ const BOT_USERNAME = 'BabydogeTapfiTg_Bot';
 const COOLDOWN = 24 * 3600 * 1000;
 const DAILY_REWARD = 10000000;   // BabyDoge per day
 const MIN_WITHDRAW = 80000000;  // 80M BabyDoge (server /api/me se bhi aata hai: S.rules)
-const MIN_REFS = 4;
-const MIN_ADS = 4;             // withdraw ke liye kam az kam 4 ads (server bhi check karta hai)             // withdraw ke liye kam az kam 4 verified referrals (server bhi check karta hai)
+const MIN_REFS = 4;             // withdraw ke liye kam az kam 4 verified referrals (server bhi check karta hai)
+const MIN_ADS = 4;              // withdraw ke liye kam az kam 4 ads (server bhi check karta hai)
+const AD_MIN_WATCH = 15000;     // ad ka poora time (15s). Isse pehle Claim nahi milta (server bhi check karta hai)
 const initData = (tg && tg.initData) || '';
 // ===== SECURITY CONFIG =====
 // ALLOW_PREVIEW = true karne se demo mode (bina Telegram) chalta hai. LIVE bot ke liye hamesha false rakho.
@@ -601,7 +602,7 @@ function mockData() {
     return { balance: Math.round(MOCK.balance * 10000) / 10000, isVerified: MOCK.isVerified, serverTime: Date.now(),
         rules: { minWithdraw: MIN_WITHDRAW, minRefs: MIN_REFS },
         tap: { done: MOCK.tapDone, max: ROUNDS_PER_DAY, target: TAP_TARGET, perTap: TAP_REWARD, lineTaps: MOCK.lineTaps, cooldown: 15000, nextTime: MOCK.nextTime },
-        ads: { reward: 5000, cooldown: 30000, lastClaim: 0, watched: 0 },
+        ads: { reward: 5000, cooldown: 0, lastClaim: 0, watched: 0 },
         tasks: MOCK.tasks, proof: MOCK.proof, referrals: MOCK.referrals, withdrawals: MOCK.withdrawals };
 }
 async function mockApi(path, body) {
@@ -1388,10 +1389,11 @@ function switchTab(t) {
 
 
 /* =====================================================
-   WATCH ADS  (task style:  Open -> ad dekho -> wapas aao -> Claim)
-   - Open  : server se one-time token leta hai, phir ad dikhata hai
-   - Claim : ad poora hone ke baad button "Claim" ban jata hai, user tap karke reward leta hai
-   - Reward SERVER credit karta hai (token ek hi baar chalta hai)
+   WATCH ADS  (Open -> ad POORA dekho (15s) -> wapas aao -> Claim)
+   - Open  : server se one-time token leta hai (server timer shuru), phir ad dikhata hai
+   - Claim : ad poora (15s) hone ke baad hi button "Claim" banta hai
+   - Claim ke baad koi 30s wait NAHI: next ad foran "Open" ho jata hai
+   - Reward SERVER credit karta hai (token ek hi baar chalta hai, aur 15s se pehle claim reject)
    ===================================================== */
 let adBusy = false;       // Open ya Claim request chal rahi hai
 let adBusyLabel = '';     // busy ke waqt button text
@@ -1402,8 +1404,6 @@ const AD_TOKEN_LOCAL_TTL = 9 * 60 * 1000;   // server TTL 10 min, thoda pehle re
 let adCount = 0;          // abhi kitne ad cards bane hain (scroll par barhte rehte hain = unlimited)
 const AD_BATCH = 4;       // har baar itne naye cards add hote hain
 
-const adCooldown = () => (S && S.ads && Number(S.ads.cooldown)) || 30000;
-const adLast = () => (S && S.ads && Number(S.ads.lastClaim)) || 0;
 const adRewardAmt = () => (S && S.ads && Number(S.ads.reward)) || 5000;
 const adWatched = () => (S && S.ads && Number(S.ads.watched)) || 0;
 const minAdsReq = () => (S && S.rules && Number(S.rules.minAds)) || MIN_ADS;
@@ -1438,13 +1438,12 @@ window.addEventListener('scroll', adFill, { passive: true });
 
 function renderAdBtn() {
     ensureAdCards();
-    const w = adWatched(), rew = adRewardAmt(), need = minAdsReq();
+    const w = adWatched(), rew = adRewardAmt();
     const tot = $id('ad-total'), ern = $id('ad-earned');
     if (tot) tot.innerText = fmt(w);
     if (ern) ern.innerText = fmt(w * rew) + ' BabyDoge';
 
     if (adTok && Date.now() - adTokAt > AD_TOKEN_LOCAL_TTL && !adBusy) { adTok = null; adIdx = -1; }
-    const wait = adLast() + adCooldown() - srvNow();
 
     for (let i = 0; i < adCount; i++) {
         const b = $id('adb-' + i); if (!b) continue;
@@ -1457,10 +1456,9 @@ function renderAdBtn() {
         } else if (adTok) {
             if (i === adIdx) { text = 'Claim'; cls += ' claim'; hint = 'Ad watched ✓ Tap Claim to get your reward!'; }
             else { text = 'Locked'; dis = true; cls += ' off'; hint = 'Claim your watched ad first.'; }
-        } else if (wait > 0) {
-            text = 'Wait ' + Math.ceil(wait / 1000) + 's'; dis = true; cls += ' off'; hint = 'Next ad will be ready shortly.';
         } else {
-            text = 'Open ›'; hint = 'Open the ad, watch it & come back to claim your reward!';
+            // Koi wait nahi: har ad foran open ho sakta hai
+            text = 'Open ›'; hint = 'Open the ad, watch it fully & come back to claim your reward!';
         }
         if (b.innerText !== text) b.innerText = text;
         if (b.className !== cls) b.className = cls;
@@ -1497,11 +1495,12 @@ async function watchAd(i) {
             if (!cl.ok) {
                 const msg = cl.error || 'Error';
                 showToast(msg);
-                if (/expired|invalid|closed too early/i.test(msg)) adTok = null;
+                // Ad poora nahi dekha / session khatam: token hata do, user dobara Open karega
+                if (/expired|invalid|full ad|too early/i.test(msg)) adTok = null;
                 return;
             }
             adTok = null;
-            setState(cl.data);   // watched +1 => list aage barh jati hai (Watch Ad #next)
+            setState(cl.data);   // watched +1 => list aage barh jati hai, next ad foran "Open" (koi wait nahi)
             showToast('+' + fmt(cl.reward || adRewardAmt()) + ' BabyDoge claimed!');
             return;
         }
@@ -1512,9 +1511,16 @@ async function watchAd(i) {
         const st = await api('/api/ad/start', {});
         if (!st.ok) { showToast(st.error || 'Error'); return; }
 
+        const t0 = Date.now();   // ad shuru hone ka waqt
         let watched = false;
         try { await show_12348157(); watched = true; } catch (e) { watched = false; }
         if (!watched) { showToast('Ad was not completed. Please try again.'); return; }
+
+        // Ad ka poora time (15s) guzra? Agar user ne jaldi band kar diya to Claim nahi milega
+        if (Date.now() - t0 < AD_MIN_WATCH - 500) {
+            showToast('Please watch the full ad (15s) to earn your reward.');
+            return;
+        }
 
         // Ad poora hua -> ye card "Claim" ban jayega
         adTok = st.token;
